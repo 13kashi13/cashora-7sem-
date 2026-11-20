@@ -1,7 +1,7 @@
 // API Configuration
 // This file centralizes all API endpoint URLs for easy environment switching
 
-const API_BASE_URL = window.CASHORA_API_URL || 'http://localhost:4000';
+const API_BASE_URL = typeof window.CASHORA_API_URL === 'string' ? window.CASHORA_API_URL : 'http://localhost:4000';
 
 // Export configuration
 window.CASHORA_CONFIG = {

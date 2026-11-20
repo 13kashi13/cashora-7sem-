@@ -1,19 +1,18 @@
 services:
   - type: web
-    name: cashora-7sem
+    name: cashora-backend
     runtime: node
-    buildCommand: cd server && npm install
-    startCommand: cd server && npm start
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 4000
       - key: SESSION_SECRET
         generateValue: true
-      - key: SUPABASE_URL
+      - key: FRONTEND_URL
         sync: false
-      - key: SUPABASE_ANON_KEY
+      - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false

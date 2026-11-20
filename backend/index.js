@@ -1,6 +1,6 @@
 require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 const express = require('express');
-const session = require('express-session');
+const cookieSession = require('cookie-session');
 const path = require('path');
 const crypto = require('crypto');
 const fs = require('fs'); // still needed for file uploads & multer
@@ -8,7 +8,17 @@ const fs = require('fs'); // still needed for file uploads & multer
 const supabase = require('./src/db');
 
 const app = express();
+
+// Render terminates TLS at its proxy; without this, express-session sees the
+// request as plain HTTP and silently drops the `secure` session cookie.
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 4000;
+
+// ─── Helper: absolute URL on the frontend ────────────────────────────────────
+// FRONTEND_URL (e.g. https://your-app.vercel.app) is needed for redirects that
+// arrive directly at Render (OAuth callbacks). Empty = same origin.
+const FRONTEND_URL = (process.env.FRONTEND_URL || '').replace(/\/+$/, '');
+const frontendUrl = (p) => `${FRONTEND_URL}${p}`;
 
 // ─── Helper: get admin/fallback user id ───────────────────────────────────────
 // Used for platform tokens (YouTube, Instagram, Threads, Bluesky) that don't
@@ -47,34 +57,30 @@ app.use(express.json());
 
 // CORS middleware - Updated for separate frontend/backend deployment
 const cors = require('cors');
+// Production traffic is same-origin through the Vercel proxy (frontend/vercel.json),
+// so CORS is only needed for local dev and any origins listed in CORS_ORIGIN
+// (comma-separated). Unknown origins get no CORS headers, so browsers block them.
 const allowedOrigins = [
-  process.env.CORS_ORIGIN || 'http://localhost:3000',
+  ...(process.env.CORS_ORIGIN || '').split(',').map(o => o.trim()).filter(Boolean),
+  ...(FRONTEND_URL ? [FRONTEND_URL] : []),
   'http://localhost:3000',
   'http://127.0.0.1:3000',
-  'http://localhost:5173', // Vite dev server
+  'http://localhost:5173',
   'http://127.0.0.1:5173',
-  'http://127.0.0.1:4000', // For backward compatibility during migration
-  'http://localhost:4000'
+  'http://localhost:4000',
+  'http://127.0.0.1:4000'
 ];
 
 app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, Postman, etc.)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) !== -1 || origin.includes('vercel.app')) {
-      callback(null, true);
-    } else {
-      callback(null, true); // Allow all origins during development, restrict in production
-    }
-  },
+  origin: (origin, callback) => callback(null, !origin || allowedOrigins.includes(origin)),
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// Serve static files from the project root
-app.use(express.static(path.join(__dirname, '..')));
+// Serve the frontend for local development (production frontend is on Vercel).
+// Never serve the repo root: that would expose backend source and data files.
+app.use(express.static(path.join(__dirname, '..', 'frontend')));
 
 // Redirect rules for proper navigation
 app.get('/login', (req, res) => {
@@ -114,17 +120,22 @@ app.get('/terms', (req, res) => {
   res.redirect('/terms-and-conditions/');
 });
 
-// Session configuration - Updated for production
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'cashora-super-secret-key-default-2025',
-  resave: false,
-  saveUninitialized: false,
-  cookie: { 
-    secure: process.env.NODE_ENV === 'production', // true in production with HTTPS
-    httpOnly: true,
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', // 'none' for cross-origin in production
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
-  }
+// Session configuration
+// Signed-cookie sessions: survive Render restarts/sleeps (no server-side store).
+// The cookie is first-party on the Vercel domain thanks to the proxy, so
+// SameSite=Lax works and protects against cross-site request forgery.
+let sessionSecret = process.env.SESSION_SECRET;
+if (!sessionSecret) {
+  sessionSecret = crypto.randomBytes(32).toString('hex');
+  console.warn('⚠️  SESSION_SECRET is not set — using a random secret. Users will be logged out on every restart. Set SESSION_SECRET in your environment.');
+}
+app.use(cookieSession({
+  name: 'cashora.sid',
+  keys: [sessionSecret],
+  secure: process.env.NODE_ENV === 'production',
+  httpOnly: true,
+  sameSite: 'lax',
+  maxAge: 24 * 60 * 60 * 1000 // 24 hours
 }));
 
 // ─── Routes ───────────────────────────────────────────────
@@ -258,10 +269,11 @@ app.post('/api/user/profile', async (req, res) => {
 
 // Logout
 app.get('/auth/logout', (req, res) => {
-  req.session.destroy(() => {
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-    res.json({ success: true, redirectUrl: `${frontendUrl}/login/` });
-  });
+  req.session = null;
+  const loginUrl = frontendUrl('/login/');
+  // Browser navigation (Sign out link) → redirect; fetch/XHR → JSON
+  if (req.accepts(['json', 'html']) === 'html') return res.redirect(loginUrl);
+  res.json({ success: true, redirectUrl: loginUrl });
 });
 
 // ─── File Upload (Multer) ──────────────────────────────────
@@ -1060,11 +1072,11 @@ app.get('/auth/youtube/callback', async (req, res) => {
 
   if (error) {
     console.error('YouTube OAuth authorization error:', error);
-    return res.redirect('/dashboard/?tab=analytics&youtube_error=' + encodeURIComponent(error));
+    return res.redirect(frontendUrl('/dashboard/?tab=analytics&youtube_error=' + encodeURIComponent(error)));
   }
 
   if (!code) {
-    return res.redirect('/dashboard/?tab=analytics&youtube_error=no_code_provided');
+    return res.redirect(frontendUrl('/dashboard/?tab=analytics&youtube_error=no_code_provided'));
   }
 
   try {
@@ -1087,10 +1099,10 @@ app.get('/auth/youtube/callback', async (req, res) => {
     }
 
     console.log('🎉 Successfully authenticated with YouTube!');
-    res.redirect('/dashboard/?tab=analytics&connected=youtube');
+    res.redirect(frontendUrl('/dashboard/?tab=analytics&connected=youtube'));
   } catch (err) {
     console.error('Error exchanging YouTube authorization code:', err.message);
-    res.redirect('/dashboard/?tab=analytics&youtube_error=' + encodeURIComponent(err.message));
+    res.redirect(frontendUrl('/dashboard/?tab=analytics&youtube_error=' + encodeURIComponent(err.message)));
   }
 });
 
@@ -1112,7 +1124,7 @@ app.get('/auth/youtube/disconnect', async (req, res) => {
   } catch (err) {
     console.error('Error disconnecting YouTube:', err.message);
   }
-  res.redirect('/dashboard/?tab=distribution');
+  res.redirect(frontendUrl('/dashboard/?tab=distribution'));
 });
 
 // Route: Check YouTube connection status
@@ -1514,7 +1526,7 @@ app.get('/auth/instagram/disconnect', async (req, res) => {
   } catch (err) {
     console.error('Error disconnecting Instagram:', err.message);
   }
-  res.redirect('/dashboard/?tab=distribution');
+  res.redirect(frontendUrl('/dashboard/?tab=distribution'));
 });
 
 // Instagram Analytics Endpoint
@@ -1803,7 +1815,7 @@ app.get('/auth/threads/disconnect', async (req, res) => {
   } catch (err) {
     console.error('Error disconnecting Threads:', err.message);
   }
-  res.redirect('/dashboard/?tab=distribution');
+  res.redirect(frontendUrl('/dashboard/?tab=distribution'));
 });
 
 // Threads Analytics Endpoint
