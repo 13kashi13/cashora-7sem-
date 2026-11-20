@@ -3,35 +3,44 @@ const express = require('express');
 const session = require('express-session');
 const path = require('path');
 const crypto = require('crypto');
+const fs = require('fs'); // still needed for file uploads & multer
 
+const supabase = require('./src/db');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// ─── Persistent Data Store (JSON files) ───────────────────
-const fs = require('fs');
-const dataDir = path.join(__dirname, 'data');
-if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-
-function loadJSON(filename, fallback) {
-  const fp = path.join(dataDir, filename);
+// ─── Helper: get admin/fallback user id ───────────────────────────────────────
+// Used for platform tokens (YouTube, Instagram, Threads, Bluesky) that don't
+// yet have per-user association.
+async function getAdminUserId(req) {
+  if (req && req.session && req.session.user && req.session.user.id) {
+    return req.session.user.id;
+  }
   try {
-    if (fs.existsSync(fp)) return JSON.parse(fs.readFileSync(fp, 'utf8'));
-  } catch (e) { console.warn(`Failed to load ${filename}:`, e.message); }
-  return fallback;
+    const { data } = await supabase
+      .from('users')
+      .select('id')
+      .eq('role', 'admin')
+      .limit(1)
+      .single();
+    if (data && data.id) return data.id;
+  } catch (e) {
+    // ignore
+  }
+  // Absolute fallback: first user in DB
+  try {
+    const { data } = await supabase
+      .from('users')
+      .select('id')
+      .limit(1)
+      .single();
+    if (data && data.id) return data.id;
+  } catch (e) {
+    // ignore
+  }
+  return null;
 }
-function saveJSON(filename, data) {
-  try { fs.writeFileSync(path.join(dataDir, filename), JSON.stringify(data, null, 2)); }
-  catch (e) { console.error(`Failed to save ${filename}:`, e.message); }
-}
-
-// Load persistent stores
-let libraryItems = loadJSON('library.json', []);
-let scheduledPosts = loadJSON('scheduled_posts.json', []);
-let postingStatuses = loadJSON('posting_statuses.json', []);
-let automationSettings = loadJSON('automation_settings.json', { autoPublish: false, smartThumb: true, webhook: true, aspect: '9:16', tags: '#cashora #ai #viral #contentcreator' });
-let userProfileData = loadJSON('user_profile.json', { name: 'Demo User', email: 'demo@cashora.tech', username: '@cashora_user', timezone: 'Asia/Kolkata', bio: 'Automating high-conversion video content with CashoraAI.' });
-
 
 // Parse JSON bodies
 app.use(express.json());
@@ -101,74 +110,133 @@ app.use(session({
   }
 }));
 
-// Demo users database (in real app, use proper database with hashed passwords)
-const users = [
-  { email: 'demo@cashora.tech', password: 'demo123', name: 'Demo User' },
-  { email: 'admin@cashora.tech', password: 'admin123', name: 'Admin User' },
-  { email: 'test@example.com', password: 'test123', name: 'Test User' },
-  { email: 'vaibhav@cashora.tech', password: 'demo123', name: 'Vaibhav Gawai' }
-];
-
 // ─── Routes ───────────────────────────────────────────────
 
 // Email/Password Login
-app.post('/auth/login', (req, res) => {
+// Requires a Postgres function `login(p_email, p_password)` — see SUPABASE_FUNCTIONS.sql
+app.post('/auth/login', async (req, res) => {
   const { email, password } = req.body;
-  
-  // Find user
-  const user = users.find(u => u.email === email && u.password === password);
-  
-  if (user) {
-    // Store user in session
-    req.session.user = {
-      email: user.email,
-      name: user.name
-    };
-    
-    res.json({
-      success: true,
-      user: {
+  try {
+    const { data: rows, error } = await supabase.rpc('login', {
+      p_email: email,
+      p_password: password
+    });
+    if (error) {
+      console.error('Login RPC error:', error.message);
+      return res.json({ success: false, message: 'Login failed. Please try again.' });
+    }
+    const user = rows && rows[0];
+    if (user) {
+      req.session.user = {
+        id: user.id,
         email: user.email,
-        name: user.name
-      }
-    });
-  } else {
-    res.json({
-      success: false,
-      message: 'Invalid email or password'
-    });
+        name: user.name,
+        username: user.username,
+        timezone: user.timezone,
+        bio: user.bio,
+        role: user.role
+      };
+      res.json({
+        success: true,
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name
+        }
+      });
+    } else {
+      res.json({ success: false, message: 'Invalid email or password' });
+    }
+  } catch (err) {
+    console.error('Login error:', err.message);
+    res.json({ success: false, message: 'Login failed. Please try again.' });
   }
 });
 
 // Get current logged-in user (called by frontend)
-app.get('/auth/user', (req, res) => {
-  res.json({
-    loggedIn: !!(req.session && req.session.user),
-    name: userProfileData.name,
-    email: userProfileData.email,
-    username: userProfileData.username || '@cashora_user',
-    timezone: userProfileData.timezone || 'Asia/Kolkata',
-    bio: userProfileData.bio || 'Automating high-conversion video content with CashoraAI.'
-  });
+app.get('/auth/user', async (req, res) => {
+  if (!req.session || !req.session.user) {
+    return res.json({ loggedIn: false });
+  }
+  try {
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('id, email, name, username, timezone, bio, role')
+      .eq('id', req.session.user.id)
+      .single();
+    if (error || !user) {
+      return res.json({
+        loggedIn: true,
+        name: req.session.user.name || 'Demo User',
+        email: req.session.user.email || 'demo@cashora.tech',
+        username: req.session.user.username || '@cashora_user',
+        timezone: req.session.user.timezone || 'Asia/Kolkata',
+        bio: req.session.user.bio || 'Automating high-conversion video content with CashoraAI.'
+      });
+    }
+    res.json({
+      loggedIn: true,
+      name: user.name,
+      email: user.email,
+      username: user.username || '@cashora_user',
+      timezone: user.timezone || 'Asia/Kolkata',
+      bio: user.bio || 'Automating high-conversion video content with CashoraAI.'
+    });
+  } catch (err) {
+    console.error('Auth user error:', err.message);
+    res.json({
+      loggedIn: true,
+      name: req.session.user.name,
+      email: req.session.user.email,
+      username: req.session.user.username || '@cashora_user',
+      timezone: req.session.user.timezone || 'Asia/Kolkata',
+      bio: req.session.user.bio || 'Automating high-conversion video content with CashoraAI.'
+    });
+  }
 });
 
 // Update current user profile / preferences
-app.post('/api/user/profile', (req, res) => {
+app.post('/api/user/profile', async (req, res) => {
   const { name, email, username, timezone, bio, preferences } = req.body;
   if (!req.session.user) {
     req.session.user = { name: name || 'Creator', email: email || 'demo@cashora.tech' };
   }
-  if (name) { req.session.user.name = name; userProfileData.name = name; }
-  if (email) { req.session.user.email = email; userProfileData.email = email; }
-  if (username) { req.session.user.username = username; userProfileData.username = username; }
-  if (timezone) { req.session.user.timezone = timezone; userProfileData.timezone = timezone; }
-  if (bio !== undefined) { req.session.user.bio = bio; userProfileData.bio = bio; }
-  if (preferences) {
-    req.session.user.preferences = { ...(req.session.user.preferences || {}), ...preferences };
-    userProfileData.preferences = { ...(userProfileData.preferences || {}), ...preferences };
+  // Update session
+  if (name)      req.session.user.name = name;
+  if (email)     req.session.user.email = email;
+  if (username)  req.session.user.username = username;
+  if (timezone)  req.session.user.timezone = timezone;
+  if (bio !== undefined) req.session.user.bio = bio;
+
+  if (!req.session.user.id) {
+    // No DB row to update if no ID
+    return res.json({ success: true, message: 'Settings saved to session', user: req.session.user });
   }
-  saveJSON('user_profile.json', userProfileData);
-  res.json({ success: true, message: 'Settings saved successfully', user: userProfileData });
+
+  try {
+    const updatePayload = {};
+    if (name)      updatePayload.name = name;
+    if (email)     updatePayload.email = email;
+    if (username)  updatePayload.username = username;
+    if (timezone)  updatePayload.timezone = timezone;
+    if (bio !== undefined) updatePayload.bio = bio;
+
+    const { data, error } = await supabase
+      .from('users')
+      .update(updatePayload)
+      .eq('id', req.session.user.id)
+      .select('id, email, name, username, timezone, bio, role')
+      .single();
+
+    if (error) {
+      console.error('Profile update error:', error.message);
+      return res.json({ success: true, message: 'Settings saved to session (DB update failed)', user: req.session.user });
+    }
+    res.json({ success: true, message: 'Settings saved successfully', user: data });
+  } catch (err) {
+    console.error('Profile update exception:', err.message);
+    res.json({ success: true, message: 'Settings saved to session', user: req.session.user });
+  }
 });
 
 // Logout
@@ -250,37 +318,49 @@ app.post('/api/upload', upload.single('video'), async (req, res) => {
   }
 });
 
-// ─── Posting Status Store (file-backed) ───────────────────
-// postingStatuses loaded from data/posting_statuses.json at startup
+// ─── Posting Status Store (Supabase-backed) ───────────────
 
 // n8n calls this when posting succeeds or fails
-app.post('/api/posting-status', (req, res) => {
+app.post('/api/posting-status', async (req, res) => {
   const { status, platforms, message, email } = req.body;
   const entry = {
-    id: Date.now(),
-    timestamp: new Date().toISOString(),
     status: status || 'unknown',
     platforms: platforms || 'all',
     message: message || null,
     email: email || 'unknown'
   };
 
-  postingStatuses.unshift(entry);
-  if (postingStatuses.length > 50) postingStatuses.length = 50;
-  saveJSON('posting_statuses.json', postingStatuses);
+  try {
+    const { error } = await supabase.from('posting_statuses').insert(entry);
+    if (error) console.error('Error inserting posting status:', error.message);
+  } catch (err) {
+    console.error('Exception inserting posting status:', err.message);
+  }
 
   console.log(`📣 Posting status received from n8n: ${status}`);
   res.json({ received: true });
 });
 
 // Dashboard polls this to show real-time status
-app.get('/api/posting-status', (req, res) => {
-  res.json({ statuses: postingStatuses.slice(0, 10) });
+app.get('/api/posting-status', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('posting_statuses')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(10);
+    if (error) {
+      console.error('Error fetching posting statuses:', error.message);
+      return res.json({ statuses: [] });
+    }
+    res.json({ statuses: data || [] });
+  } catch (err) {
+    console.error('Exception fetching posting statuses:', err.message);
+    res.json({ statuses: [] });
+  }
 });
 
-// ─── Scheduled Posts Engine (file-backed) ────────────────
-// scheduledPosts loaded from data/scheduled_posts.json at startup
-
+// ─── Scheduled Posts Engine (Supabase-backed) ────────────
 
 // Helper function to trigger posting a video to n8n
 async function triggerPosting({ videoPath, caption, platforms, email }) {
@@ -306,56 +386,70 @@ async function triggerPosting({ videoPath, caption, platforms, email }) {
 
 // Scheduler loop: runs every 10 seconds to check if any post is due
 setInterval(async () => {
-  const now = new Date();
-  for (const post of scheduledPosts) {
-    if (post.status === 'scheduled') {
-      const targetTime = new Date(post.scheduledTime);
-      if (targetTime <= now) {
-        post.status = 'processing';
-        console.log(`⏰ [SCHEDULER] Time hit for post #${post.id} ("${post.title}")! Triggering workflow now...`);
-        try {
-          await triggerPosting({
-            videoPath: post.videoPath,
-            caption: post.caption,
-            platforms: post.platforms,
-            email: post.email
-          });
-          post.status = 'posted';
-          post.postedAt = new Date().toISOString();
+  try {
+    const { data: duePosts, error } = await supabase
+      .from('scheduled_posts')
+      .select('*')
+      .eq('status', 'scheduled')
+      .lte('scheduled_time', new Date().toISOString());
 
-          // Add to postingStatuses so dashboard gets live notification
-          postingStatuses.unshift({
-            id: Date.now(),
-            timestamp: new Date().toISOString(),
-            status: 'success',
-            platforms: post.platforms || 'all',
-            message: `Scheduled post "${post.title || post.caption || 'Video'}" published successfully!`,
-            email: post.email || 'unknown'
-          });
-          saveJSON('posting_statuses.json', postingStatuses);
-        } catch (err) {
-          console.error(`❌ [SCHEDULER] Failed to trigger scheduled post #${post.id}:`, err.message);
-          post.status = 'failed';
-          post.error = err.message;
+    if (error) {
+      console.error('[SCHEDULER] Error querying due posts:', error.message);
+      return;
+    }
+    if (!duePosts || duePosts.length === 0) return;
 
-          postingStatuses.unshift({
-            id: Date.now(),
-            timestamp: new Date().toISOString(),
-            status: 'failed',
-            platforms: post.platforms || 'all',
-            message: `Scheduled post failed: ${err.message}`,
-            email: post.email || 'unknown'
-          });
-          saveJSON('posting_statuses.json', postingStatuses);
-        }
+    for (const post of duePosts) {
+      // Mark as processing
+      await supabase
+        .from('scheduled_posts')
+        .update({ status: 'processing' })
+        .eq('id', post.id);
+
+      console.log(`⏰ [SCHEDULER] Time hit for post #${post.id} ("${post.title}")! Triggering workflow now...`);
+      try {
+        await triggerPosting({
+          videoPath: post.video_path,
+          caption: post.caption,
+          platforms: post.platforms,
+          email: post.email
+        });
+
+        await supabase
+          .from('scheduled_posts')
+          .update({ status: 'posted', posted_at: new Date().toISOString() })
+          .eq('id', post.id);
+
+        // Add to posting_statuses
+        await supabase.from('posting_statuses').insert({
+          status: 'success',
+          platforms: post.platforms || 'all',
+          message: `Scheduled post "${post.title || post.caption || 'Video'}" published successfully!`,
+          email: post.email || 'unknown'
+        });
+
+      } catch (err) {
+        console.error(`❌ [SCHEDULER] Failed to trigger scheduled post #${post.id}:`, err.message);
+        await supabase
+          .from('scheduled_posts')
+          .update({ status: 'failed', error_message: err.message })
+          .eq('id', post.id);
+
+        await supabase.from('posting_statuses').insert({
+          status: 'failed',
+          platforms: post.platforms || 'all',
+          message: `Scheduled post failed: ${err.message}`,
+          email: post.email || 'unknown'
+        });
       }
     }
+  } catch (err) {
+    console.error('[SCHEDULER] Unexpected error:', err.message);
   }
-  saveJSON('scheduled_posts.json', scheduledPosts);
 }, 10000);
 
 // API endpoint to schedule a post
-app.post('/api/schedule-post', upload.single('video'), (req, res) => {
+app.post('/api/schedule-post', upload.single('video'), async (req, res) => {
   const { title, caption, platforms, scheduledTime, existingVideoPath } = req.body;
   
   let videoPath = null;
@@ -365,7 +459,6 @@ app.post('/api/schedule-post', upload.single('video'), (req, res) => {
     videoPath = req.file.path;
     filename = req.file.filename;
   } else if (existingVideoPath) {
-    // Check if it's relative like /server/uploads/... or absolute
     if (path.isAbsolute(existingVideoPath) && fs.existsSync(existingVideoPath)) {
       videoPath = existingVideoPath;
     } else {
@@ -374,7 +467,6 @@ app.post('/api/schedule-post', upload.single('video'), (req, res) => {
       if (fs.existsSync(fullPath)) {
         videoPath = fullPath;
       } else {
-        // Look in uploads dir
         const basename = path.basename(existingVideoPath);
         const uploadCandidate = path.join(uploadDir, basename);
         if (fs.existsSync(uploadCandidate)) {
@@ -385,7 +477,7 @@ app.post('/api/schedule-post', upload.single('video'), (req, res) => {
     filename = path.basename(existingVideoPath);
   }
 
-  // If no file was uploaded nor existing, look for the most recently uploaded file in uploadDir as fallback
+  // Fallback: most recently uploaded file
   if (!videoPath) {
     try {
       const files = fs.readdirSync(uploadDir).filter(f => f.startsWith('video-') || f.endsWith('.mp4'));
@@ -403,127 +495,258 @@ app.post('/api/schedule-post', upload.single('video'), (req, res) => {
     return res.status(400).json({ success: false, message: 'No video provided or found for scheduling' });
   }
 
-  const post = {
-    id: 'sched_' + Date.now(),
+  const userId = req.session && req.session.user ? req.session.user.id : null;
+  const userEmail = req.session && req.session.user ? req.session.user.email : 'demo@cashora.tech';
+
+  const postPayload = {
     title: title || caption || filename || 'Scheduled Video',
     caption: caption || title || '',
     platforms: platforms || 'YouTube, Instagram, Facebook, Threads, Twitter, LinkedIn, Bluesky, Pinterest, TikTok',
-    scheduledTime: scheduledTime || new Date(Date.now() + 60000).toISOString(),
+    scheduled_time: scheduledTime || new Date(Date.now() + 60000).toISOString(),
     status: 'scheduled',
-    videoPath: videoPath,
+    video_path: videoPath,
     filename: filename,
-    createdAt: new Date().toISOString(),
-    email: (req.session && req.session.user) ? req.session.user.email : 'demo@cashora.tech'
+    email: userEmail,
+    user_id: userId
   };
 
-  scheduledPosts.unshift(post);
-  saveJSON('scheduled_posts.json', scheduledPosts);
-  console.log(`📅 Post scheduled successfully: "${post.title}" for ${post.scheduledTime} on [${post.platforms}]`);
-  
-  res.json({
-    success: true,
-    message: 'Post scheduled successfully!',
-    post: post
-  });
+  try {
+    const { data, error } = await supabase
+      .from('scheduled_posts')
+      .insert(postPayload)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error inserting scheduled post:', error.message);
+      return res.status(500).json({ success: false, message: 'Failed to schedule post' });
+    }
+
+    console.log(`📅 Post scheduled: "${data.title}" for ${data.scheduled_time}`);
+    res.json({ success: true, message: 'Post scheduled successfully!', post: data });
+  } catch (err) {
+    console.error('Exception scheduling post:', err.message);
+    res.status(500).json({ success: false, message: 'Failed to schedule post' });
+  }
 });
 
 // API endpoint to get all scheduled posts
-app.get('/api/scheduled-posts', (req, res) => {
-  res.json({ scheduledPosts });
+app.get('/api/scheduled-posts', async (req, res) => {
+  const userId = req.session && req.session.user ? req.session.user.id : null;
+  try {
+    let query = supabase
+      .from('scheduled_posts')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (userId) query = query.eq('user_id', userId);
+
+    const { data, error } = await query;
+    if (error) {
+      console.error('Error fetching scheduled posts:', error.message);
+      return res.json({ scheduledPosts: [] });
+    }
+    res.json({ scheduledPosts: data || [] });
+  } catch (err) {
+    console.error('Exception fetching scheduled posts:', err.message);
+    res.json({ scheduledPosts: [] });
+  }
 });
 
 // API endpoint to trigger a scheduled post immediately
 app.post('/api/scheduled-posts/:id/trigger', async (req, res) => {
-  const post = scheduledPosts.find(p => p.id === req.params.id);
-  if (!post) {
-    return res.status(404).json({ success: false, message: 'Post not found' });
-  }
-
-  post.status = 'processing';
   try {
-    await triggerPosting({
-      videoPath: post.videoPath,
-      caption: post.caption,
-      platforms: post.platforms,
-      email: post.email
-    });
-    post.status = 'posted';
-    post.postedAt = new Date().toISOString();
-    saveJSON('scheduled_posts.json', scheduledPosts);
-    res.json({ success: true, message: 'Post triggered and published successfully!' });
+    const { data: post, error: fetchError } = await supabase
+      .from('scheduled_posts')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+
+    if (fetchError || !post) {
+      return res.status(404).json({ success: false, message: 'Post not found' });
+    }
+
+    await supabase.from('scheduled_posts').update({ status: 'processing' }).eq('id', post.id);
+
+    try {
+      await triggerPosting({
+        videoPath: post.video_path,
+        caption: post.caption,
+        platforms: post.platforms,
+        email: post.email
+      });
+      await supabase
+        .from('scheduled_posts')
+        .update({ status: 'posted', posted_at: new Date().toISOString() })
+        .eq('id', post.id);
+      res.json({ success: true, message: 'Post triggered and published successfully!' });
+    } catch (err) {
+      await supabase
+        .from('scheduled_posts')
+        .update({ status: 'failed', error_message: err.message })
+        .eq('id', post.id);
+      res.status(500).json({ success: false, message: err.message });
+    }
   } catch (err) {
-    post.status = 'failed';
-    post.error = err.message;
-    saveJSON('scheduled_posts.json', scheduledPosts);
+    console.error('Exception triggering post:', err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
 // API endpoint to cancel / delete a scheduled post
-app.delete('/api/scheduled-posts/:id', (req, res) => {
-  const index = scheduledPosts.findIndex(p => p.id === req.params.id);
-  if (index !== -1) {
-    scheduledPosts.splice(index, 1);
-    saveJSON('scheduled_posts.json', scheduledPosts);
-    return res.json({ success: true, message: 'Scheduled post cancelled' });
+app.delete('/api/scheduled-posts/:id', async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('scheduled_posts')
+      .delete()
+      .eq('id', req.params.id);
+    if (error) {
+      console.error('Error deleting scheduled post:', error.message);
+      return res.status(500).json({ success: false, message: 'Failed to delete scheduled post' });
+    }
+    res.json({ success: true, message: 'Scheduled post cancelled' });
+  } catch (err) {
+    console.error('Exception deleting scheduled post:', err.message);
+    res.status(500).json({ success: false, message: err.message });
   }
-  res.status(404).json({ success: false, message: 'Scheduled post not found' });
 });
 
-// ─── Content Library API (File-backed persistence) ──────────
-app.get('/api/library', (req, res) => {
-  res.json({ success: true, items: libraryItems });
+// ─── Content Library API (Supabase-backed) ──────────────────
+app.get('/api/library', async (req, res) => {
+  const userId = req.session && req.session.user ? req.session.user.id : null;
+  try {
+    let query = supabase
+      .from('library_items')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (userId) query = query.eq('user_id', userId);
+
+    const { data, error } = await query;
+    if (error) {
+      console.error('Error fetching library items:', error.message);
+      return res.json({ success: true, items: [] });
+    }
+    res.json({ success: true, items: data || [] });
+  } catch (err) {
+    console.error('Exception fetching library items:', err.message);
+    res.json({ success: true, items: [] });
+  }
 });
 
-app.post('/api/library', (req, res) => {
+app.post('/api/library', async (req, res) => {
+  const userId = req.session && req.session.user ? req.session.user.id : null;
   const item = {
-    id: req.body.id || ('vid_' + Date.now()),
     title: req.body.title || 'Untitled Video',
     date: req.body.date || new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
     status: req.body.status || 'draft',
     platforms: req.body.platforms || ['YouTube', 'Instagram'],
     type: req.body.type || 'upload',
-    filePath: req.body.filePath || '',
+    file_path: req.body.filePath || req.body.file_path || '',
     caption: req.body.caption || '',
-    createdAt: req.body.createdAt || new Date().toISOString()
+    user_id: userId
   };
-  libraryItems.unshift(item);
-  saveJSON('library.json', libraryItems);
-  res.json({ success: true, item });
-});
-
-app.put('/api/library/:id', (req, res) => {
-  const idx = libraryItems.findIndex(it => it.id === req.params.id);
-  if (idx === -1) {
-    return res.status(404).json({ success: false, message: 'Library item not found' });
+  try {
+    const { data, error } = await supabase
+      .from('library_items')
+      .insert(item)
+      .select()
+      .single();
+    if (error) {
+      console.error('Error inserting library item:', error.message);
+      return res.status(500).json({ success: false, message: 'Failed to add library item' });
+    }
+    res.json({ success: true, item: data });
+  } catch (err) {
+    console.error('Exception inserting library item:', err.message);
+    res.status(500).json({ success: false, message: err.message });
   }
-  libraryItems[idx] = { ...libraryItems[idx], ...req.body, id: libraryItems[idx].id };
-  saveJSON('library.json', libraryItems);
-  res.json({ success: true, item: libraryItems[idx] });
 });
 
-app.delete('/api/library/:id', (req, res) => {
-  const idx = libraryItems.findIndex(it => it.id === req.params.id);
-  if (idx !== -1) {
-    libraryItems.splice(idx, 1);
-    saveJSON('library.json', libraryItems);
-    return res.json({ success: true, message: 'Item deleted from library' });
+app.put('/api/library/:id', async (req, res) => {
+  const userId = req.session && req.session.user ? req.session.user.id : null;
+  try {
+    let query = supabase
+      .from('library_items')
+      .update(req.body)
+      .eq('id', req.params.id);
+    if (userId) query = query.eq('user_id', userId);
+
+    const { data, error } = await query.select().single();
+    if (error) {
+      console.error('Error updating library item:', error.message);
+      return res.status(404).json({ success: false, message: 'Library item not found or update failed' });
+    }
+    res.json({ success: true, item: data });
+  } catch (err) {
+    console.error('Exception updating library item:', err.message);
+    res.status(500).json({ success: false, message: err.message });
   }
-  res.status(404).json({ success: false, message: 'Item not found' });
 });
 
-// ─── Automation Settings API (File-backed persistence) ───────
-app.get('/api/automation-settings', (req, res) => {
-  res.json({ success: true, settings: automationSettings });
+app.delete('/api/library/:id', async (req, res) => {
+  const userId = req.session && req.session.user ? req.session.user.id : null;
+  try {
+    let query = supabase.from('library_items').delete().eq('id', req.params.id);
+    if (userId) query = query.eq('user_id', userId);
+
+    const { error } = await query;
+    if (error) {
+      console.error('Error deleting library item:', error.message);
+      return res.status(500).json({ success: false, message: 'Failed to delete library item' });
+    }
+    res.json({ success: true, message: 'Item deleted from library' });
+  } catch (err) {
+    console.error('Exception deleting library item:', err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
 });
 
-app.post('/api/automation-settings', (req, res) => {
-  automationSettings = { ...automationSettings, ...req.body };
-  saveJSON('automation_settings.json', automationSettings);
-  res.json({ success: true, settings: automationSettings });
+// ─── Automation Settings API (Supabase-backed) ───────────
+app.get('/api/automation-settings', async (req, res) => {
+  const userId = req.session && req.session.user ? req.session.user.id : null;
+  const defaults = { autoPublish: false, smartThumb: true, webhook: true, aspect: '9:16', tags: '#cashora #ai #viral #contentcreator' };
+
+  if (!userId) return res.json({ success: true, settings: defaults });
+
+  try {
+    const { data, error } = await supabase
+      .from('automation_settings')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+    if (error || !data) {
+      return res.json({ success: true, settings: defaults });
+    }
+    res.json({ success: true, settings: data });
+  } catch (err) {
+    console.error('Exception fetching automation settings:', err.message);
+    res.json({ success: true, settings: defaults });
+  }
 });
 
-// ─── AI Caption Improvement (Level 1: Existing Caption → LLM → Improved Caption) ───
+app.post('/api/automation-settings', async (req, res) => {
+  const userId = req.session && req.session.user ? req.session.user.id : null;
+  if (!userId) {
+    return res.json({ success: true, settings: req.body, message: 'No user session, settings not persisted' });
+  }
+  try {
+    const payload = { ...req.body, user_id: userId };
+    const { data, error } = await supabase
+      .from('automation_settings')
+      .upsert(payload, { onConflict: 'user_id' })
+      .select()
+      .single();
+    if (error) {
+      console.error('Error upserting automation settings:', error.message);
+      return res.status(500).json({ success: false, message: 'Failed to save settings' });
+    }
+    res.json({ success: true, settings: data });
+  } catch (err) {
+    console.error('Exception upserting automation settings:', err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ─── AI Caption Improvement ───────────────────────────────────────────────────
 async function improveCaptionWithLLM(originalCaption) {
   const caption = (originalCaption || '').trim();
   if (!caption) {
@@ -532,7 +755,6 @@ async function improveCaptionWithLLM(originalCaption) {
     throw err;
   }
 
-  // Determine available LLM provider
   const openaiKey = process.env.OPENAI_API_KEY || process.env.LLM_API_KEY;
   const groqKey = process.env.GROQ_API_KEY;
   const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_API_KEY;
@@ -729,8 +951,6 @@ app.post('/api/ai/improve-caption', async (req, res) => {
 // ═══════════════════════════════════════════════════════════
 const { google } = require('googleapis');
 
-const YT_TOKENS_FILE = path.join(__dirname, 'youtube_tokens.json');
-
 function createOAuthClient() {
   const clientId = process.env.YOUTUBE_CLIENT_ID;
   const clientSecret = process.env.YOUTUBE_CLIENT_SECRET;
@@ -740,37 +960,50 @@ function createOAuthClient() {
 
 const ytOAuth2Client = createOAuthClient();
 
-function loadSavedTokens() {
+// Load YouTube tokens from Supabase on startup
+let savedYtTokens = null;
+(async () => {
   try {
-    if (fs.existsSync(YT_TOKENS_FILE)) {
-      const data = fs.readFileSync(YT_TOKENS_FILE, 'utf8');
-      const tokens = JSON.parse(data);
-      if (tokens && (tokens.access_token || tokens.refresh_token)) {
-        ytOAuth2Client.setCredentials(tokens);
-        console.log('✅ Loaded existing YouTube OAuth credentials from disk');
-        return tokens;
-      }
+    const adminId = await getAdminUserId(null);
+    if (!adminId) return;
+    const { data } = await supabase
+      .from('platform_tokens')
+      .select('*')
+      .eq('platform', 'youtube')
+      .eq('user_id', adminId)
+      .single();
+    if (data && (data.access_token || data.refresh_token)) {
+      savedYtTokens = {
+        access_token: data.access_token,
+        refresh_token: data.refresh_token,
+        token_type: data.token_type,
+        expiry_date: data.expiry_date
+      };
+      ytOAuth2Client.setCredentials(savedYtTokens);
+      console.log('✅ Loaded existing YouTube OAuth credentials from Supabase');
     }
-  } catch (err) {
-    console.error('Error reading saved YouTube tokens:', err.message);
+  } catch (e) {
+    console.warn('Could not load YouTube tokens from Supabase:', e.message);
   }
-  return null;
-}
+})();
 
-let savedYtTokens = loadSavedTokens();
-
-ytOAuth2Client.on('tokens', (tokens) => {
+ytOAuth2Client.on('tokens', async (tokens) => {
   try {
-    let current = {};
-    if (fs.existsSync(YT_TOKENS_FILE)) {
-      try { current = JSON.parse(fs.readFileSync(YT_TOKENS_FILE, 'utf8')); } catch (e) {}
-    }
-    const merged = { ...current, ...tokens };
-    fs.writeFileSync(YT_TOKENS_FILE, JSON.stringify(merged, null, 2));
+    const merged = { ...savedYtTokens, ...tokens };
     savedYtTokens = merged;
-    console.log('🔄 YouTube tokens updated & saved');
+    const adminId = await getAdminUserId(null);
+    if (!adminId) return;
+    await supabase.from('platform_tokens').upsert({
+      user_id: adminId,
+      platform: 'youtube',
+      access_token: merged.access_token || null,
+      refresh_token: merged.refresh_token || null,
+      token_type: merged.token_type || null,
+      expiry_date: merged.expiry_date || null
+    }, { onConflict: 'user_id,platform' });
+    console.log('🔄 YouTube tokens updated & saved to Supabase');
   } catch (err) {
-    console.error('Failed to write refreshed YouTube tokens:', err.message);
+    console.error('Failed to save refreshed YouTube tokens to Supabase:', err.message);
   }
 });
 
@@ -820,8 +1053,21 @@ app.get('/auth/youtube/callback', async (req, res) => {
     const { tokens } = await ytOAuth2Client.getToken(code);
     ytOAuth2Client.setCredentials(tokens);
     savedYtTokens = tokens;
-    fs.writeFileSync(YT_TOKENS_FILE, JSON.stringify(tokens, null, 2));
     analyticsCache.data = null; // Invalidate cache
+
+    // Save to Supabase
+    const adminId = await getAdminUserId(req);
+    if (adminId) {
+      await supabase.from('platform_tokens').upsert({
+        user_id: adminId,
+        platform: 'youtube',
+        access_token: tokens.access_token || null,
+        refresh_token: tokens.refresh_token || null,
+        token_type: tokens.token_type || null,
+        expiry_date: tokens.expiry_date || null
+      }, { onConflict: 'user_id,platform' });
+    }
+
     console.log('🎉 Successfully authenticated with YouTube!');
     res.redirect('/dashboard/?tab=analytics&connected=youtube');
   } catch (err) {
@@ -831,10 +1077,15 @@ app.get('/auth/youtube/callback', async (req, res) => {
 });
 
 // Route: Disconnect YouTube
-app.get('/auth/youtube/disconnect', (req, res) => {
+app.get('/auth/youtube/disconnect', async (req, res) => {
   try {
-    if (fs.existsSync(YT_TOKENS_FILE)) {
-      fs.unlinkSync(YT_TOKENS_FILE);
+    const adminId = await getAdminUserId(req);
+    if (adminId) {
+      await supabase
+        .from('platform_tokens')
+        .delete()
+        .eq('user_id', adminId)
+        .eq('platform', 'youtube');
     }
     savedYtTokens = null;
     ytOAuth2Client.setCredentials({});
@@ -1154,16 +1405,30 @@ app.get('/api/analytics/youtube', async (req, res) => {
 // ═══════════════════════════════════════════════════════════
 // ─── Instagram Integration & Analytics ───────────────────
 // ═══════════════════════════════════════════════════════════
-const IG_TOKENS_FILE = path.join(__dirname, 'instagram_tokens.json');
 
-function getInstagramTokens() {
+async function getInstagramTokens(req) {
+  // Try Supabase first
   try {
-    if (fs.existsSync(IG_TOKENS_FILE)) {
-      const data = JSON.parse(fs.readFileSync(IG_TOKENS_FILE, 'utf8'));
-      if (data && data.access_token) return data;
+    const userId = await getAdminUserId(req);
+    if (userId) {
+      const { data } = await supabase
+        .from('platform_tokens')
+        .select('*')
+        .eq('platform', 'instagram')
+        .eq('user_id', userId)
+        .single();
+      if (data && data.access_token) {
+        return {
+          access_token: data.access_token,
+          account_id: data.account_id || process.env.INSTAGRAM_ACCOUNT_ID || '17841465212584814',
+          username: data.username || 'vaibhav.tf7',
+          app_id: data.app_id || process.env.INSTAGRAM_APP_ID,
+          app_secret: data.app_secret || process.env.INSTAGRAM_APP_SECRET
+        };
+      }
     }
-  } catch (err) {
-    console.error('Error reading Instagram tokens file:', err.message);
+  } catch (e) {
+    // fall through to env var
   }
   if (process.env.INSTAGRAM_ACCESS_TOKEN) {
     return {
@@ -1180,12 +1445,12 @@ function getInstagramTokens() {
 let igAnalyticsCache = {
   data: null,
   timestamp: 0,
-  ttl: 5 * 60 * 1000 // 5 minutes cache
+  ttl: 5 * 60 * 1000
 };
 
 // Check Instagram connection status
 app.get('/api/instagram/status', async (req, res) => {
-  const igConfig = getInstagramTokens();
+  const igConfig = await getInstagramTokens(req);
   if (!igConfig || !igConfig.access_token) {
     return res.json({ connected: false });
   }
@@ -1220,10 +1485,11 @@ app.get('/api/instagram/status', async (req, res) => {
 });
 
 // Disconnect Instagram
-app.get('/auth/instagram/disconnect', (req, res) => {
+app.get('/auth/instagram/disconnect', async (req, res) => {
   try {
-    if (fs.existsSync(IG_TOKENS_FILE)) {
-      fs.unlinkSync(IG_TOKENS_FILE);
+    const userId = await getAdminUserId(req);
+    if (userId) {
+      await supabase.from('platform_tokens').delete().eq('user_id', userId).eq('platform', 'instagram');
     }
     igAnalyticsCache.data = null;
     console.log('🔌 Disconnected Instagram account');
@@ -1235,7 +1501,7 @@ app.get('/auth/instagram/disconnect', (req, res) => {
 
 // Instagram Analytics Endpoint
 app.get('/api/analytics/instagram', async (req, res) => {
-  const igConfig = getInstagramTokens();
+  const igConfig = await getInstagramTokens(req);
   if (!igConfig || !igConfig.access_token) {
     return res.status(401).json({
       connected: false,
@@ -1285,7 +1551,6 @@ app.get('/api/analytics/instagram', async (req, res) => {
         let itemReach = 0;
         let itemSaves = 0;
 
-        // Fetch insights for top items
         if (idx < 3) {
           try {
             const insRes = await axios.get(`https://graph.instagram.com/${item.id}/insights?metric=reach,saved,total_interactions&access_token=${igConfig.access_token}`);
@@ -1435,16 +1700,28 @@ app.get('/api/analytics/instagram', async (req, res) => {
 // ═══════════════════════════════════════════════════════════
 // ─── Threads Integration & Analytics ───────────────────────
 // ═══════════════════════════════════════════════════════════
-const THREADS_TOKENS_FILE = path.join(__dirname, 'threads_tokens.json');
 
-function getThreadsTokens() {
+async function getThreadsTokens(req) {
+  // Try Supabase first
   try {
-    if (fs.existsSync(THREADS_TOKENS_FILE)) {
-      const data = JSON.parse(fs.readFileSync(THREADS_TOKENS_FILE, 'utf8'));
-      if (data && data.access_token) return data;
+    const userId = await getAdminUserId(req);
+    if (userId) {
+      const { data } = await supabase
+        .from('platform_tokens')
+        .select('*')
+        .eq('platform', 'threads')
+        .eq('user_id', userId)
+        .single();
+      if (data && data.access_token) {
+        return {
+          access_token: data.access_token,
+          user_id: data.account_id || process.env.THREADS_USER_ID,
+          username: data.username || process.env.THREADS_USERNAME || 'vaibhav.tf7'
+        };
+      }
     }
-  } catch (err) {
-    console.error('Error reading Threads tokens file:', err.message);
+  } catch (e) {
+    // fall through to env var
   }
   if (process.env.THREADS_ACCESS_TOKEN) {
     return {
@@ -1459,12 +1736,12 @@ function getThreadsTokens() {
 let threadsAnalyticsCache = {
   data: null,
   timestamp: 0,
-  ttl: 5 * 60 * 1000 // 5 minutes cache
+  ttl: 5 * 60 * 1000
 };
 
 // Check Threads connection status
 app.get('/api/threads/status', async (req, res) => {
-  const threadsConfig = getThreadsTokens();
+  const threadsConfig = await getThreadsTokens(req);
   if (!threadsConfig || !threadsConfig.access_token) {
     return res.json({ connected: false });
   }
@@ -1497,10 +1774,11 @@ app.get('/api/threads/status', async (req, res) => {
 });
 
 // Disconnect Threads
-app.get('/auth/threads/disconnect', (req, res) => {
+app.get('/auth/threads/disconnect', async (req, res) => {
   try {
-    if (fs.existsSync(THREADS_TOKENS_FILE)) {
-      fs.unlinkSync(THREADS_TOKENS_FILE);
+    const userId = await getAdminUserId(req);
+    if (userId) {
+      await supabase.from('platform_tokens').delete().eq('user_id', userId).eq('platform', 'threads');
     }
     threadsAnalyticsCache.data = null;
     console.log('🔌 Disconnected Threads account');
@@ -1512,7 +1790,7 @@ app.get('/auth/threads/disconnect', (req, res) => {
 
 // Threads Analytics Endpoint
 app.get('/api/analytics/threads', async (req, res) => {
-  const threadsConfig = getThreadsTokens();
+  const threadsConfig = await getThreadsTokens(req);
   if (!threadsConfig || !threadsConfig.access_token) {
     return res.status(401).json({
       connected: false,
@@ -1741,7 +2019,7 @@ function getTwitterOAuthHeader(method, url, queryParams = {}) {
   return 'OAuth ' + Object.keys(oauthParams).sort().map(k => `${encodeURIComponent(k)}="${encodeURIComponent(oauthParams[k])}"`).join(', ');
 }
 
-// Helper: Fetch Twitter Profile (Tries OAuth 1.0a users/me first, then Bearer token)
+// Helper: Fetch Twitter Profile
 async function getTwitterProfile() {
   const url = 'https://api.twitter.com/2/users/me';
   const params = { 'user.fields': 'public_metrics,profile_image_url,description,name' };
@@ -1760,7 +2038,6 @@ async function getTwitterProfile() {
     }
   }
 
-  // Fallback to Bearer token
   if (TWITTER_BEARER_TOKEN) {
     const bearerUrl = new URL(`https://api.twitter.com/2/users/by/username/${TWITTER_USERNAME}`);
     bearerUrl.searchParams.append('user.fields', 'public_metrics,profile_image_url,name,description');
@@ -1786,7 +2063,7 @@ async function twitterV2(path, params = {}) {
   return res.data;
 }
 
-// GET /api/twitter/status — check connection & return real profile
+// GET /api/twitter/status
 app.get('/api/twitter/status', async (req, res) => {
   if (!TWITTER_API_KEY && !TWITTER_BEARER_TOKEN) {
     return res.json({ connected: false, message: 'Twitter credentials not set in .env' });
@@ -1814,29 +2091,25 @@ app.get('/api/twitter/status', async (req, res) => {
   }
 });
 
-// GET /api/analytics/twitter — full analytics data
+// GET /api/analytics/twitter
 app.get('/api/analytics/twitter', async (req, res) => {
   const forceRefresh = req.query.refresh === 'true';
 
-  // Return cached if fresh
   if (!forceRefresh && twitterAnalyticsCache && (Date.now() - twitterAnalyticsCache.timestamp) < 10 * 60 * 1000) {
     return res.json({ ...twitterAnalyticsCache.data, cached: true });
   }
 
-  // If no bearer token, return unavailable state
   if (!TWITTER_BEARER_TOKEN) {
     return res.json({ connected: false, unavailable: true, reason: 'no_token', message: 'Add TWITTER_BEARER_TOKEN to server/.env to see live data' });
   }
 
   try {
-    // 1) Fetch user profile
     const userRes = await twitterV2('/users/by/username/' + TWITTER_USERNAME, {
       'user.fields': 'public_metrics,profile_image_url,name,description'
     });
     const user = userRes.data;
     const metrics = user.public_metrics || {};
 
-    // 2) Fetch recent tweets (last 100)
     const tweetsRes = await twitterV2(`/users/${user.id}/tweets`, {
       max_results: 100,
       'tweet.fields': 'public_metrics,created_at,text,entities',
@@ -1844,7 +2117,6 @@ app.get('/api/analytics/twitter', async (req, res) => {
     });
     const tweets = tweetsRes.data || [];
 
-    // 3) Aggregate stats
     let totalImpressions = 0, totalLikes = 0, totalRetweets = 0, totalReplies = 0, totalBookmarks = 0;
     tweets.forEach(t => {
       const m = t.public_metrics || {};
@@ -1855,7 +2127,6 @@ app.get('/api/analytics/twitter', async (req, res) => {
       totalBookmarks   += m.bookmark_count    || 0;
     });
 
-    // 4) Daily impressions (last 7 days by tweet date)
     const dayMap = {};
     const now = new Date();
     for (let i = 6; i >= 0; i--) {
@@ -1872,7 +2143,6 @@ app.get('/api/analytics/twitter', async (req, res) => {
     });
     const viewsByDay = Object.entries(dayMap).map(([day, views]) => ({ day, views }));
 
-    // 5) Engagement rate per day (likes+replies+retweets / impressions)
     const engMap = {};
     Object.keys(dayMap).forEach(k => engMap[k] = { eng: 0, imp: 0 });
     tweets.forEach(t => {
@@ -1888,7 +2158,6 @@ app.get('/api/analytics/twitter', async (req, res) => {
       day, rate: v.imp > 0 ? parseFloat(((v.eng / v.imp) * 100).toFixed(2)) : 0
     }));
 
-    // 6) Tweet type breakdown (text / with media / with links)
     let typeText = 0, typeMedia = 0, typeLink = 0;
     tweets.forEach(t => {
       if (t.entities?.urls && t.entities.urls.some(u => !u.url.includes('t.co/') || u.expanded_url)) typeLink++;
@@ -1901,7 +2170,6 @@ app.get('/api/analytics/twitter', async (req, res) => {
       { type: 'Media', count: typeMedia }
     ];
 
-    // 7) Actions over time (likes vs retweets per day)
     const actionsMap = {};
     Object.keys(dayMap).forEach(k => actionsMap[k] = { likes: 0, retweets: 0 });
     tweets.forEach(t => {
@@ -1914,7 +2182,6 @@ app.get('/api/analytics/twitter', async (req, res) => {
     });
     const actionsData = Object.entries(actionsMap).map(([day, v]) => ({ day, likes: v.likes, retweets: v.retweets }));
 
-    // 8) Top posts
     const topTweets = [...tweets]
       .sort((a, b) => (b.public_metrics?.impression_count || 0) - (a.public_metrics?.impression_count || 0))
       .slice(0, 5)
@@ -1979,60 +2246,85 @@ app.get('/api/analytics/twitter', async (req, res) => {
 });
 
 
-
 // ─── Bluesky / AT Protocol ────────────────────────────────────────────────────
 
 const BLUESKY_HANDLE       = process.env.BLUESKY_HANDLE       || '';
 const BLUESKY_APP_PASSWORD = process.env.BLUESKY_APP_PASSWORD || '';
 const BSKY_API        = 'https://bsky.social/xrpc';
 const BSKY_PUBLIC_API = 'https://public.api.bsky.app/xrpc';
-const BSKY_SESSION_FILE = path.join(__dirname, 'data', 'bluesky_session.json');
 
 let bskySessionCache   = null;
 let bskyAnalyticsCache = null;
 let bskyAuthBlockedUntil = 0;
 
-// Load persisted session from disk (survives server restarts)
-function loadPersistedBskySession() {
+// Load persisted Bluesky session from Supabase on startup
+(async () => {
   try {
-    if (fs.existsSync(BSKY_SESSION_FILE)) {
-      const raw = JSON.parse(fs.readFileSync(BSKY_SESSION_FILE, 'utf8'));
-      if (raw && raw.accessJwt && raw.refreshJwt && raw.expiry > Date.now()) {
-        bskySessionCache = raw;
-        console.log('🔵 Bluesky: Loaded persisted session for', raw.handle);
+    const adminId = await getAdminUserId(null);
+    if (!adminId) return;
+    const { data } = await supabase
+      .from('platform_tokens')
+      .select('*')
+      .eq('platform', 'bluesky')
+      .eq('user_id', adminId)
+      .single();
+    if (data && data.access_token && data.refresh_token) {
+      const expiry = data.expiry_date ? Number(data.expiry_date) : (Date.now() + 90 * 60 * 1000);
+      if (expiry > Date.now()) {
+        bskySessionCache = {
+          accessJwt: data.access_token,
+          refreshJwt: data.refresh_token,
+          did: data.account_id || '',
+          handle: data.username || BLUESKY_HANDLE,
+          expiry: expiry
+        };
+        console.log('🔵 Bluesky: Loaded persisted session for', bskySessionCache.handle);
       } else {
+        // Keep refreshJwt even if expired — allows silent refresh
+        bskySessionCache = {
+          accessJwt: null,
+          refreshJwt: data.refresh_token,
+          did: data.account_id || '',
+          handle: data.username || BLUESKY_HANDLE,
+          expiry: 0
+        };
         console.log('🔵 Bluesky: Persisted session expired, will refresh on next use');
-        bskySessionCache = raw && raw.refreshJwt ? raw : null; // keep refreshJwt even if accessJwt expired
       }
     }
   } catch (e) {
-    console.warn('⚠️ Bluesky: Could not load persisted session:', e.message);
+    console.warn('⚠️ Bluesky: Could not load persisted session from Supabase:', e.message);
   }
-}
-loadPersistedBskySession();
+})();
 
-function saveBskySession(session) {
+async function saveBskySession(session) {
   try {
-    fs.mkdirSync(path.dirname(BSKY_SESSION_FILE), { recursive: true });
-    fs.writeFileSync(BSKY_SESSION_FILE, JSON.stringify(session, null, 2));
+    const adminId = await getAdminUserId(null);
+    if (!adminId) return;
+    await supabase.from('platform_tokens').upsert({
+      user_id: adminId,
+      platform: 'bluesky',
+      access_token: session.accessJwt || null,
+      refresh_token: session.refreshJwt || null,
+      account_id: session.did || null,
+      username: session.handle || null,
+      expiry_date: session.expiry ? String(session.expiry) : null
+    }, { onConflict: 'user_id,platform' });
   } catch (e) {
-    console.warn('⚠️ Bluesky: Could not save session to disk:', e.message);
+    console.warn('⚠️ Bluesky: Could not save session to Supabase:', e.message);
   }
 }
 
 async function getBskySession() {
-  // If session is valid and not about to expire, use it directly
   if (bskySessionCache && bskySessionCache.accessJwt && Date.now() < bskySessionCache.expiry - 5 * 60 * 1000) {
     return bskySessionCache;
   }
   if (!BLUESKY_HANDLE || !BLUESKY_APP_PASSWORD) return null;
   if (Date.now() < bskyAuthBlockedUntil) {
-    // If we have a stale session, try it anyway (might still work)
     if (bskySessionCache?.accessJwt) return bskySessionCache;
     return null;
   }
 
-  // Try refreshSession first (uses refreshJwt, NOT counted against createSession rate limit)
+  // Try refreshSession first
   if (bskySessionCache?.refreshJwt) {
     try {
       console.log('🔵 Bluesky: Refreshing session via refreshJwt...');
@@ -2046,25 +2338,23 @@ async function getBskySession() {
         handle:     res.data.handle,
         expiry:     Date.now() + 90 * 60 * 1000
       };
-      saveBskySession(bskySessionCache);
+      await saveBskySession(bskySessionCache);
       console.log('✅ Bluesky: Session refreshed for', bskySessionCache.handle);
       return bskySessionCache;
     } catch (err) {
       const status = err.response?.status;
       const msg = err.response?.data?.message || err.message;
       console.warn(`⚠️ Bluesky: refreshSession failed (${status}): ${msg}. Will try createSession.`);
-      // If refresh token is invalid/expired, clear it so we fall through to createSession
       if (status === 400 || status === 401) {
         bskySessionCache = null;
-        try { fs.unlinkSync(BSKY_SESSION_FILE); } catch (_) {}
       } else if (status === 429) {
-        bskyAuthBlockedUntil = Date.now() + 60 * 60 * 1000; // 1h backoff on rate limit
+        bskyAuthBlockedUntil = Date.now() + 60 * 60 * 1000;
         return bskySessionCache?.accessJwt ? bskySessionCache : null;
       }
     }
   }
 
-  // Fall back to createSession (counts against 10/day limit — use sparingly)
+  // Fall back to createSession
   try {
     console.log('🔵 Bluesky: Creating new session via createSession...');
     const res = await axios.post(`${BSKY_API}/com.atproto.server.createSession`, {
@@ -2078,7 +2368,7 @@ async function getBskySession() {
       handle:     res.data.handle,
       expiry:     Date.now() + 90 * 60 * 1000
     };
-    saveBskySession(bskySessionCache);
+    await saveBskySession(bskySessionCache);
     console.log('✅ Bluesky: New session created for', bskySessionCache.handle);
     return bskySessionCache;
   } catch (err) {
@@ -2086,11 +2376,10 @@ async function getBskySession() {
     const status = err.response?.status;
     console.warn(`⚠️ Bluesky createSession failed (${status}): ${msg}`);
     if (status === 429) {
-      // Rate limited: block for 6 hours, do NOT create new sessions today
       bskyAuthBlockedUntil = Date.now() + 6 * 60 * 60 * 1000;
-      console.warn('🚫 Bluesky: Rate limited on createSession — blocking auth for 6h. Will use existing session if available.');
+      console.warn('🚫 Bluesky: Rate limited on createSession — blocking auth for 6h.');
     } else {
-      bskyAuthBlockedUntil = Date.now() + 5 * 60 * 1000; // 5-min backoff on other errors
+      bskyAuthBlockedUntil = Date.now() + 5 * 60 * 1000;
     }
     return bskySessionCache?.accessJwt ? bskySessionCache : null;
   }
@@ -2142,8 +2431,8 @@ app.post('/api/bluesky/post', async (req, res) => {
   }
 });
 
-// Inject a manually-obtained JWT session (useful when createSession is rate-limited)
-app.post('/api/bluesky/session/inject', (req, res) => {
+// Inject a manually-obtained JWT session
+app.post('/api/bluesky/session/inject', async (req, res) => {
   const { accessJwt, refreshJwt, did, handle } = req.body;
   if (!accessJwt) return res.status(400).json({ success: false, error: 'accessJwt is required' });
   bskySessionCache = {
@@ -2153,8 +2442,8 @@ app.post('/api/bluesky/session/inject', (req, res) => {
     handle: handle || BLUESKY_HANDLE,
     expiry: Date.now() + 90 * 60 * 1000
   };
-  bskyAuthBlockedUntil = 0; // Clear any backoff
-  saveBskySession(bskySessionCache);
+  bskyAuthBlockedUntil = 0;
+  await saveBskySession(bskySessionCache);
   console.log('🔵 Bluesky: Session manually injected for', bskySessionCache.handle);
   res.json({ success: true, message: 'Session injected successfully', handle: bskySessionCache.handle });
 });
@@ -2171,7 +2460,6 @@ app.get('/api/bluesky/rate-limit', (req, res) => {
     handle: bskySessionCache?.handle || null
   });
 });
-
 
 app.get('/api/bluesky/status', async (req, res) => {
   if (!BLUESKY_HANDLE)
@@ -2282,7 +2570,7 @@ app.get('/api/dashboard/overview', async (req, res) => {
     }
 
     // 2. Instagram
-    const igConfig = getInstagramTokens();
+    const igConfig = await getInstagramTokens(req);
     if (igConfig?.access_token) {
       try {
         connectedCount++;
@@ -2297,7 +2585,7 @@ app.get('/api/dashboard/overview', async (req, res) => {
     }
 
     // 3. Threads
-    const threadsConfig = getThreadsTokens();
+    const threadsConfig = await getThreadsTokens(req);
     if (threadsConfig?.access_token) {
       connectedCount++;
       connectedPlatforms.push('Threads');
@@ -2332,33 +2620,69 @@ app.get('/api/dashboard/overview', async (req, res) => {
       }
     }
 
-    // 5. Add recent posting statuses to activity
-    postingStatuses.slice(0, 5).forEach(ps => {
-      activities.push({
-        id: 'ps_' + ps.id,
-        platform: ps.platforms || 'Social',
-        title: ps.message || `Automated Post [${ps.status}] to ${ps.platforms}`,
-        time: ps.timestamp,
-        likes: 0,
-        reposts: 0,
-        status: ps.status,
-        url: '#'
+    // 5. Add recent posting statuses to activity (from Supabase)
+    try {
+      const { data: recentStatuses } = await supabase
+        .from('posting_statuses')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(5);
+      (recentStatuses || []).forEach(ps => {
+        activities.push({
+          id: 'ps_' + ps.id,
+          platform: ps.platforms || 'Social',
+          title: ps.message || `Automated Post [${ps.status}] to ${ps.platforms}`,
+          time: ps.created_at || ps.timestamp,
+          likes: 0,
+          reposts: 0,
+          status: ps.status,
+          url: '#'
+        });
       });
-    });
+    } catch (e) {
+      console.warn('Dashboard posting statuses fetch failed:', e.message);
+    }
 
-    // 6. Add recent library items to activity
-    libraryItems.slice(0, 5).forEach(item => {
-      activities.push({
-        id: 'lib_' + item.id,
-        platform: Array.isArray(item.platforms) ? item.platforms.join(', ') : (item.platforms || 'Library'),
-        title: item.title,
-        time: item.createdAt || new Date().toISOString(),
-        likes: 0,
-        reposts: 0,
-        status: item.status,
-        url: '#'
+    // 6. Add recent library items to activity (from Supabase)
+    try {
+      const userId = req.session && req.session.user ? req.session.user.id : null;
+      let libQuery = supabase.from('library_items').select('*').order('created_at', { ascending: false }).limit(5);
+      if (userId) libQuery = libQuery.eq('user_id', userId);
+      const { data: recentLibItems } = await libQuery;
+      (recentLibItems || []).forEach(item => {
+        activities.push({
+          id: 'lib_' + item.id,
+          platform: Array.isArray(item.platforms) ? item.platforms.join(', ') : (item.platforms || 'Library'),
+          title: item.title,
+          time: item.created_at || new Date().toISOString(),
+          likes: 0,
+          reposts: 0,
+          status: item.status,
+          url: '#'
+        });
       });
-    });
+    } catch (e) {
+      console.warn('Dashboard library items fetch failed:', e.message);
+    }
+
+    // Library count & scheduled count from Supabase
+    let libraryCount = 0;
+    let scheduledCount = 0;
+    try {
+      const userId = req.session && req.session.user ? req.session.user.id : null;
+
+      let libCountQuery = supabase.from('library_items').select('id', { count: 'exact', head: true });
+      if (userId) libCountQuery = libCountQuery.eq('user_id', userId);
+      const { count: lc } = await libCountQuery;
+      libraryCount = lc || 0;
+
+      let schedCountQuery = supabase.from('scheduled_posts').select('id', { count: 'exact', head: true }).eq('status', 'scheduled');
+      if (userId) schedCountQuery = schedCountQuery.eq('user_id', userId);
+      const { count: sc } = await schedCountQuery;
+      scheduledCount = sc || 0;
+    } catch (e) {
+      console.warn('Dashboard count queries failed:', e.message);
+    }
 
     activities.sort((a, b) => new Date(b.time) - new Date(a.time));
 
@@ -2370,8 +2694,8 @@ app.get('/api/dashboard/overview', async (req, res) => {
         totalFollowers,
         connectedPlatformsCount: connectedCount,
         connectedPlatforms,
-        libraryCount: libraryItems.length,
-        scheduledCount: scheduledPosts.filter(p => p.status === 'scheduled').length
+        libraryCount,
+        scheduledCount
       },
       recentActivity: activities.slice(0, 6)
     });
@@ -2388,10 +2712,7 @@ app.listen(PORT, () => {
   console.log(`🧵 Threads API Enabled: @vaibhav.tf7`);
   console.log(`🐦 Twitter/X API: ${process.env.TWITTER_BEARER_TOKEN ? 'Connected' : 'Not configured'}`);
   console.log('');
-  console.log('📧 Demo Accounts:');
-  console.log('   Email: demo@cashora.tech | Password: demo123');
-  console.log('   Email: admin@cashora.tech | Password: admin123');
-  console.log('   Email: test@example.com | Password: test123');
+  console.log('🗄️  Storage: Supabase (PostgreSQL)');
 });
 
 // Also bind to port 2000 for tabs open on that port
@@ -2404,5 +2725,3 @@ try {
     // Port 2000 busy or unavailable, safely ignore
   });
 } catch (e) {}
-
-
