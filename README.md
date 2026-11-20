@@ -1,22 +1,30 @@
-# CASHORA.TECH - Complete Application Guide
+# CASHORA.TECH - AI-Powered Content Creation Platform
 
-## 🚀 Quick Start (60 seconds)
+## 🚀 Quick Start
+
+⚠️ **Important:** This application requires a Supabase account. See [SETUP_INSTRUCTIONS.md](./SETUP_INSTRUCTIONS.md) for detailed setup.
+
+### Quick Setup (For Existing Supabase Users)
 
 ```bash
-# 1. Start the server
+# 1. Install dependencies
 cd server
-npm install  # (first time only)
+npm install
+
+# 2. Configure environment
+cp .env.example .env
+# Edit .env with your Supabase credentials
+
+# 3. Start the server
 npm start
 
-# 2. Open in browser
+# 4. Open in browser
 http://127.0.0.1:4000
-
-# 3. Login with demo credentials
-Email: demo@cashora.tech
-Password: demo123
-
-# 4. You're in the dashboard! 🎉
 ```
+
+### First Time Setup
+
+If you haven't set up Supabase yet, please follow the comprehensive guide in [SETUP_INSTRUCTIONS.md](./SETUP_INSTRUCTIONS.md)
 
 ---
 
