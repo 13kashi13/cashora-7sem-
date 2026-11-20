@@ -73,6 +73,47 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
+// Serve static files from the project root
+app.use(express.static(path.join(__dirname, '..')));
+
+// Redirect rules for proper navigation
+app.get('/login', (req, res) => {
+  res.redirect('/login/');
+});
+
+app.get('/dashboard', (req, res) => {
+  res.redirect('/dashboard/');
+});
+
+app.get('/contact', (req, res) => {
+  res.redirect('/contact/');
+});
+
+// Block access to removed navigation pages - redirect back to home
+app.get('/team', (req, res) => {
+  res.redirect('/');
+});
+
+app.get('/team/', (req, res) => {
+  res.redirect('/');
+});
+
+app.get('/workflow', (req, res) => {
+  res.redirect('/');
+});
+
+app.get('/workflow/', (req, res) => {
+  res.redirect('/');
+});
+
+app.get('/venue', (req, res) => {
+  res.redirect('/venue/');
+});
+
+app.get('/terms', (req, res) => {
+  res.redirect('/terms-and-conditions/');
+});
+
 // Session configuration - Updated for production
 app.use(session({
   secret: process.env.SESSION_SECRET || 'cashora-super-secret-key-default-2025',
@@ -219,7 +260,7 @@ app.post('/api/user/profile', async (req, res) => {
 app.get('/auth/logout', (req, res) => {
   req.session.destroy(() => {
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-    res.json({ success: true, message: 'Logged out successfully', redirectUrl: `${frontendUrl}/login/` });
+    res.json({ success: true, redirectUrl: `${frontendUrl}/login/` });
   });
 });
 
