@@ -6,6 +6,10 @@
     <title>Dashboard — CASHORA.TECH</title>
     <link href="https://framerusercontent.com/images/AxQMXkb9SNyxDMp63XvKlzyGFo.png" rel="icon">
     
+    <!-- Cashora API Configuration -->
+    <script src="/env.js"></script>
+    <script src="/config.js"></script>
+    
     <!-- ApexCharts for better professional charts -->
     <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
     
@@ -2244,7 +2248,7 @@ async function handleScheduleSubmit() {
     showSchedMsg('Sending to server...', '#8899ff');
 
     try {
-        const res = await fetch('/api/schedule-post', { method: 'POST', body: formData });
+        const res = await fetch(window.CASHORA_CONFIG.schedule.post, { method: 'POST', body: formData });
         const data = await res.json();
         if (data.success) {
             showSchedMsg('✅ Post scheduled successfully!', '#44cc88');
@@ -2287,7 +2291,7 @@ async function renderScheduledPosts() {
     if (!list) return;
     list.innerHTML = '<div style="text-align:center;padding:30px 20px;color:var(--muted);font-size:13px;">Loading...</div>';
     try {
-        const res  = await fetch('/api/scheduled-posts');
+        const res  = await fetch(window.CASHORA_CONFIG.schedule.list);
         const data = await res.json();
         const posts = data.scheduledPosts || [];
         if (posts.length === 0) {
@@ -2348,7 +2352,7 @@ async function renderScheduledPosts() {
 async function triggerPostNow(id) {
     if (!confirm('Post this now immediately?')) return;
     try {
-        const res = await fetch('/api/scheduled-posts/' + id + '/trigger', { method: 'POST' });
+        const res = await fetch(window.CASHORA_CONFIG.schedule.trigger(id), { method: 'POST' });
         const data = await res.json();
         if (data.success) { renderScheduledPosts(); }
         else { alert('Failed: ' + data.message); }
@@ -2360,7 +2364,7 @@ async function cancelScheduledPost(id) {
     const card = document.getElementById('scard-' + id);
     if (card) { card.style.opacity = '0.4'; card.style.pointerEvents = 'none'; }
     try {
-        const res = await fetch('/api/scheduled-posts/' + id, { method: 'DELETE' });
+        const res = await fetch(window.CASHORA_CONFIG.schedule.delete(id), { method: 'DELETE' });
         const data = await res.json();
         if (data.success) { renderScheduledPosts(); }
         else {
@@ -2434,7 +2438,7 @@ async function improveCaption(textareaId, btnId, msgId) {
     }
 
     try {
-        const response = await fetch('/api/ai/improve-caption', {
+        const response = await fetch(window.CASHORA_CONFIG.ai.improveCaption, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ caption: currentCaption })
@@ -2550,7 +2554,7 @@ async function startGenerate() {
         if (capturedPlatforms.length > 0) formData.append('platforms', capturedPlatforms.join(', '));
         
         try {
-            const res = await fetch('/api/upload', {
+            const res = await fetch(window.CASHORA_CONFIG.upload.video, {
                 method: 'POST',
                 body: formData
             });
@@ -2720,7 +2724,7 @@ function getLibraryItems() {
 
 async function fetchLibraryItems() {
     try {
-        const res = await fetch('/api/library');
+        const res = await fetch(window.CASHORA_CONFIG.library.list);
         const data = await res.json();
         if (data.success && Array.isArray(data.items)) {
             _cachedLibraryItems = data.items;
@@ -2745,7 +2749,7 @@ async function addLibraryItem(item) {
         createdAt: new Date().toISOString()
     };
     try {
-        const res = await fetch('/api/library', {
+        const res = await fetch(window.CASHORA_CONFIG.library.create, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(newItem)
@@ -2767,7 +2771,7 @@ async function addLibraryItem(item) {
 async function deleteLibraryItem(id) {
     if (!confirm('Are you sure you want to delete this video from your library?')) return;
     try {
-        await fetch('/api/library/' + encodeURIComponent(id), { method: 'DELETE' });
+        await fetch(window.CASHORA_CONFIG.library.update(id), { method: 'DELETE' });
     } catch(e) {
         console.warn('Server delete failed:', e.message);
     }
@@ -2789,7 +2793,7 @@ function publishDraftItem(id) {
     _schedulePreloadPlatforms = item.platforms || ['YouTube', 'Instagram'];
 
     // Update status to published on server as well
-    fetch('/api/library/' + encodeURIComponent(id), {
+    fetch(window.CASHORA_CONFIG.library.update(id), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'published' })
@@ -3005,7 +3009,7 @@ function switchPlatform(platform) {
 // ── Unified Live Dashboard Overview (Real Numbers)
 async function loadDashboardOverview() {
     try {
-        const res = await fetch('/api/dashboard/overview');
+        const res = await fetch(window.CASHORA_CONFIG.dashboard.overview);
         const data = await res.json();
         if (!data.success) return;
 
@@ -3251,7 +3255,7 @@ async function saveUserProfile(e) {
     };
 
     try {
-        const res = await fetch('/api/user/profile', {
+        const res = await fetch(window.CASHORA_CONFIG.user.profile, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -3310,7 +3314,7 @@ async function saveAutomationSettings() {
     const payload = { autoPublish, smartThumb, webhook, aspect, tags };
 
     try {
-        const res = await fetch('/api/automation-settings', {
+        const res = await fetch(window.CASHORA_CONFIG.automation.settings, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -3344,7 +3348,7 @@ function updateConnectedChannelsCount() {
 
 async function checkInstagramStatus() {
     try {
-        const res = await fetch('/api/instagram/status', { credentials: 'include' });
+        const res = await fetch(window.CASHORA_CONFIG.instagram.status, { credentials: 'include' });
         const data = await res.json();
         const handleEl = document.getElementById('distIgHandle');
         const settingsIg = document.getElementById('settingsIgStatus');
@@ -3375,7 +3379,7 @@ async function checkInstagramStatus() {
 async function initSettingsPage() {
     // 1. Fetch user profile from server
     try {
-        const res = await fetch('/auth/user', { credentials: 'include' });
+        const res = await fetch(window.CASHORA_CONFIG.auth.user, { credentials: 'include' });
         const user = await res.json();
         if (user && user.loggedIn) {
             if (document.getElementById('settingsName')) document.getElementById('settingsName').value = user.name || '';
@@ -3393,7 +3397,7 @@ async function initSettingsPage() {
 
     // 2. Fetch automation settings from server
     try {
-        const res = await fetch('/api/automation-settings');
+        const res = await fetch(window.CASHORA_CONFIG.automation.settings);
         const data = await res.json();
         if (data.success && data.settings) {
             const s = data.settings;
@@ -3438,7 +3442,7 @@ async function checkAllPlatformStatuses() {
         checkYouTubeStatus(),
         checkThreadsStatus(),
         checkInstagramStatus(),
-        fetch('/api/bluesky/status').then(r => r.json()).then(d => {
+        fetch(window.CASHORA_CONFIG.bluesky.status).then(r => r.json()).then(d => {
             if (d.connected) {
                 const el = document.getElementById('settingsBskyStatus');
                 if (el) el.textContent = `Connected: @${d.handle} · ${d.posts||0} Live Posts · ${d.followers||0} Followers`;
@@ -3454,7 +3458,7 @@ let _youtubeConnected = false;
 
 async function checkYouTubeStatus() {
     try {
-        const res = await fetch('/api/youtube/status', { credentials: 'include' });
+        const res = await fetch(window.CASHORA_CONFIG.youtube.status, { credentials: 'include' });
         const data = await res.json();
         _youtubeConnected = !!data.connected;
 
@@ -3508,7 +3512,7 @@ let _threadsConnected = false;
 
 async function checkThreadsStatus() {
     try {
-        const res = await fetch('/api/threads/status', { credentials: 'include' });
+        const res = await fetch(window.CASHORA_CONFIG.threads.status, { credentials: 'include' });
         const data = await res.json();
         _threadsConnected = !!data.connected;
 
