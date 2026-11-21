@@ -2568,6 +2568,140 @@ app.get('/api/analytics/bluesky', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════
+// ─── Discord Integration & Analytics ───────────────────────
+// ═══════════════════════════════════════════════════════════
+
+const DISCORD_BOT_TOKEN  = process.env.DISCORD_BOT_TOKEN  || '';
+const DISCORD_GUILD_ID   = process.env.DISCORD_GUILD_ID   || '';
+const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID || '';
+
+// Discord status check
+app.get('/api/discord/status', async (req, res) => {
+  if (!DISCORD_BOT_TOKEN)
+    return res.json({ connected: false, discordConnected: false, message: 'Set DISCORD_BOT_TOKEN in server/.env' });
+
+  try {
+    // Check bot status by fetching guild info
+    const guildRes = await axios.get(`https://discord.com/api/v10/guilds/${DISCORD_GUILD_ID}`, {
+      headers: { 'Authorization': `Bot ${DISCORD_BOT_TOKEN}` }
+    });
+    
+    return res.json({
+      connected: true,
+      discordConnected: true,
+      guild: {
+        id: guildRes.data.id,
+        name: guildRes.data.name,
+        memberCount: guildRes.data.approximate_member_count || 0
+      }
+    });
+  } catch (err) {
+    console.error('Discord status check failed:', err.response?.data || err.message);
+    return res.json({ connected: false, discordConnected: false, error: err.response?.data?.message || err.message });
+  }
+});
+
+// Discord analytics
+app.get('/api/discord/analytics', async (req, res) => {
+  if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID)
+    return res.json({ connected: false, unavailable: true, reason: 'no_credentials', message: 'Add DISCORD_BOT_TOKEN and DISCORD_GUILD_ID to server/.env' });
+
+  try {
+    // Fetch guild details
+    const guildRes = await axios.get(`https://discord.com/api/v10/guilds/${DISCORD_GUILD_ID}?with_counts=true`, {
+      headers: { 'Authorization': `Bot ${DISCORD_BOT_TOKEN}` }
+    });
+
+    // Fetch channels
+    const channelsRes = await axios.get(`https://discord.com/api/v10/guilds/${DISCORD_GUILD_ID}/channels`, {
+      headers: { 'Authorization': `Bot ${DISCORD_BOT_TOKEN}` }
+    });
+
+    // Fetch recent messages from main channel
+    let recentMessages = [];
+    if (DISCORD_CHANNEL_ID) {
+      try {
+        const messagesRes = await axios.get(`https://discord.com/api/v10/channels/${DISCORD_CHANNEL_ID}/messages?limit=10`, {
+          headers: { 'Authorization': `Bot ${DISCORD_BOT_TOKEN}` }
+        });
+        recentMessages = messagesRes.data || [];
+      } catch (e) {
+        console.warn('Could not fetch Discord messages:', e.message);
+      }
+    }
+
+    const textChannels = channelsRes.data.filter(ch => ch.type === 0); // 0 = GUILD_TEXT
+    const guild = guildRes.data;
+
+    return res.json({
+      connected: true,
+      guild: {
+        id: guild.id,
+        name: guild.name,
+        memberCount: guild.approximate_member_count || 0,
+        onlineCount: guild.approximate_presence_count || 0
+      },
+      stats: {
+        members: guild.approximate_member_count || 0,
+        messages: recentMessages.length,
+        reactions: 0, // Discord API doesn't provide aggregate reaction count easily
+        channels: textChannels.length
+      },
+      recentMessages: recentMessages.slice(0, 5).map(msg => ({
+        id: msg.id,
+        content: (msg.content || '').slice(0, 100),
+        author: msg.author?.username || 'Unknown',
+        timestamp: msg.timestamp,
+        reactions: msg.reactions?.reduce((sum, r) => sum + r.count, 0) || 0
+      }))
+    });
+  } catch (err) {
+    console.error('Discord analytics failed:', err.response?.data || err.message);
+    return res.json({ connected: false, unavailable: true, reason: 'api_error', message: err.response?.data?.message || err.message });
+  }
+});
+
+// Discord post endpoint
+app.post('/api/discord/post', async (req, res) => {
+  if (!DISCORD_BOT_TOKEN || !DISCORD_CHANNEL_ID)
+    return res.status(400).json({ success: false, error: 'Discord not configured. Set DISCORD_BOT_TOKEN and DISCORD_CHANNEL_ID in .env' });
+
+  try {
+    const { caption, text, videoUrl } = req.body;
+    const content = caption || text || 'New post from Cashora';
+
+    // Send message to Discord channel
+    const payload = { content };
+    
+    // If there's a video URL, add it as an embed
+    if (videoUrl) {
+      payload.embeds = [{
+        title: 'Video Post',
+        description: content,
+        url: videoUrl,
+        color: 5865242 // Discord brand color
+      }];
+    }
+
+    const response = await axios.post(
+      `https://discord.com/api/v10/channels/${DISCORD_CHANNEL_ID}/messages`,
+      payload,
+      { headers: { 'Authorization': `Bot ${DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' }}
+    );
+
+    return res.json({
+      success: true,
+      messageId: response.data.id,
+      channelId: response.data.channel_id,
+      url: `https://discord.com/channels/${DISCORD_GUILD_ID}/${DISCORD_CHANNEL_ID}/${response.data.id}`
+    });
+  } catch (err) {
+    console.error('Discord post failed:', err.response?.data || err.message);
+    return res.status(500).json({ success: false, error: err.response?.data?.message || err.message });
+  }
+});
+
 // ─── Unified Dashboard Overview (Real Live Numbers) ─────────────────────────
 app.get('/api/dashboard/overview', async (req, res) => {
   try {
@@ -2650,7 +2784,23 @@ app.get('/api/dashboard/overview', async (req, res) => {
       }
     }
 
-    // 5. Add recent posting statuses to activity (from Supabase)
+    // 5. Discord
+    if (DISCORD_BOT_TOKEN && DISCORD_GUILD_ID) {
+      try {
+        const guildRes = await axios.get(`https://discord.com/api/v10/guilds/${DISCORD_GUILD_ID}?with_counts=true`, {
+          headers: { 'Authorization': `Bot ${DISCORD_BOT_TOKEN}` }
+        });
+        if (guildRes.data) {
+          connectedCount++;
+          connectedPlatforms.push('Discord');
+          totalFollowers += (guildRes.data.approximate_member_count || 0);
+        }
+      } catch (e) {
+        console.warn('Dashboard Discord overview failed:', e.message);
+      }
+    }
+
+    // 6. Add recent posting statuses to activity (from Supabase)
     try {
       const { data: recentStatuses } = await supabase
         .from('posting_statuses')
@@ -2673,7 +2823,7 @@ app.get('/api/dashboard/overview', async (req, res) => {
       console.warn('Dashboard posting statuses fetch failed:', e.message);
     }
 
-    // 6. Add recent library items to activity (from Supabase)
+    // 7. Add recent library items to activity (from Supabase)
     try {
       const userId = req.session && req.session.user ? req.session.user.id : null;
       let libQuery = supabase.from('library_items').select('*').order('created_at', { ascending: false }).limit(5);
