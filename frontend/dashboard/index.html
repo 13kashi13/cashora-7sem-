@@ -2642,7 +2642,11 @@ const stepIds = ['step-script','step-assets','step-voice','step-render','step-do
 const lineIds = ['line-1','line-2','line-3','line-4'];
 
 async function startGenerate() {
+    console.log('🎬 startGenerate() called');
+    
     const isUploadMode = document.getElementById('createUploadTab') && document.getElementById('createUploadTab').style.display !== 'none';
+    console.log('📍 Mode:', isUploadMode ? 'UPLOAD' : 'PROMPT');
+    
     let file = null;
     let uploadedFileData = null;
     let capturedCaption = '';
@@ -2654,7 +2658,12 @@ async function startGenerate() {
         capturedCaption = document.getElementById('uploadCaptionInput')?.value.trim() || '';
     } else {
         capturedPrompt = document.getElementById('promptInput')?.value.trim() || '';
-        if (!capturedPrompt) { document.getElementById('promptInput')?.focus(); return; }
+        console.log('📝 Captured prompt:', capturedPrompt);
+        if (!capturedPrompt) { 
+            alert('Please enter a prompt first!');
+            document.getElementById('promptInput')?.focus(); 
+            return; 
+        }
     }
 
     const capturedPlatforms = Array.from(document.querySelectorAll('#platformGrid .platform-toggle.selected'))

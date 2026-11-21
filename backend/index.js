@@ -643,6 +643,7 @@ app.delete('/api/scheduled-posts/:id', async (req, res) => {
 // ─── Content Library API (Supabase-backed) ──────────────────
 app.get('/api/library', async (req, res) => {
   const userId = req.session && req.session.user ? req.session.user.id : null;
+  console.log('📚 Library fetch - User ID:', userId, 'Session:', !!req.session);
   try {
     let query = supabase
       .from('library_items')
@@ -2709,6 +2710,25 @@ app.post('/api/discord/post', async (req, res) => {
 const BLOTATO_API_KEY = process.env.BLOTATO_API_KEY || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const BLOTATO_BASE_URL = 'https://backend.blotato.com/v2';
+
+// Debug endpoint - check video API configuration
+app.get('/api/video/config-check', (req, res) => {
+  res.json({
+    blotato: {
+      configured: !!BLOTATO_API_KEY,
+      keyPrefix: BLOTATO_API_KEY ? BLOTATO_API_KEY.substring(0, 10) + '...' : 'NOT SET'
+    },
+    gemini: {
+      configured: !!GEMINI_API_KEY,
+      keyPrefix: GEMINI_API_KEY ? GEMINI_API_KEY.substring(0, 12) + '...' : 'NOT SET'
+    },
+    session: {
+      exists: !!req.session,
+      hasUser: !!(req.session && req.session.user),
+      userId: req.session && req.session.user ? req.session.user.id : null
+    }
+  });
+});
 
 // Enhance user prompt using Gemini API
 app.post('/api/video/enhance-prompt', async (req, res) => {
