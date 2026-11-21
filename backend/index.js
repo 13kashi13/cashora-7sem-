@@ -984,7 +984,7 @@ const { google } = require('googleapis');
 function createOAuthClient() {
   const clientId = process.env.YOUTUBE_CLIENT_ID;
   const clientSecret = process.env.YOUTUBE_CLIENT_SECRET;
-  const redirectUri = process.env.YOUTUBE_REDIRECT_URI || `http://127.0.0.1:${PORT}/auth/youtube/callback`;
+  const redirectUri = process.env.YOUTUBE_REDIRECT_URI || `https://cashora-backend-1w64.onrender.com/auth/youtube/callback`;
   return new google.auth.OAuth2(clientId, clientSecret, redirectUri);
 }
 
