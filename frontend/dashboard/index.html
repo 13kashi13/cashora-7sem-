@@ -616,6 +616,45 @@
                                 <span class="prompt-count" id="promptCount">0 / 500</span>
                             </div>
                         </div>
+
+                        <!-- Video Generation Settings (Prompt Tab Only) -->
+                        <div class="form-group" id="videoGenerationSettings">
+                            <label class="form-label">Video Settings</label>
+                            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;">
+                                <!-- Duration -->
+                                <div>
+                                    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px;">Duration</label>
+                                    <select id="videoDuration" style="width:100%;padding:10px 12px;background:#141414;border:1px solid var(--border);border-radius:8px;color:var(--light);font-size:13px;cursor:pointer;">
+                                        <option value="5">5 seconds</option>
+                                        <option value="10" selected>10 seconds</option>
+                                        <option value="15">15 seconds</option>
+                                        <option value="30">30 seconds</option>
+                                    </select>
+                                </div>
+
+                                <!-- Aspect Ratio -->
+                                <div>
+                                    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px;">Aspect Ratio</label>
+                                    <select id="aspectRatio" style="width:100%;padding:10px 12px;background:#141414;border:1px solid var(--border);border-radius:8px;color:var(--light);font-size:13px;cursor:pointer;">
+                                        <option value="16:9" selected>16:9 (Horizontal)</option>
+                                        <option value="9:16">9:16 (Vertical)</option>
+                                        <option value="1:1">1:1 (Square)</option>
+                                    </select>
+                                </div>
+
+                                <!-- Visual Style -->
+                                <div>
+                                    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px;">Visual Style</label>
+                                    <select id="visualStyle" style="width:100%;padding:10px 12px;background:#141414;border:1px solid var(--border);border-radius:8px;color:var(--light);font-size:13px;cursor:pointer;">
+                                        <option value="cinematic" selected>Cinematic</option>
+                                        <option value="realistic">Realistic</option>
+                                        <option value="animated">Animated</option>
+                                        <option value="artistic">Artistic</option>
+                                        <option value="professional">Professional</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Upload tab -->
@@ -2670,7 +2709,194 @@ async function startGenerate() {
             resetCreate();
         }
     } else {
-        runStep(0, activeSteps);
+        // PROMPT-TO-VIDEO MODE: Use Gemini + Blotato
+        handlePromptToVideo(capturedPrompt, capturedPlatforms, activeSteps);
+    }
+
+    // Handle Prompt-to-Video Generation
+    async function handlePromptToVideo(userPrompt, platforms, steps) {
+        try {
+            // Get video settings
+            const duration = document.getElementById('videoDuration')?.value || '10';
+            const aspectRatio = document.getElementById('aspectRatio')?.value || '16:9';
+            const visualStyle = document.getElementById('visualStyle')?.value || 'cinematic';
+
+            // Step 1: Enhance prompt with Gemini
+            updateProgress(0, steps, 'Enhancing prompt with AI...');
+            
+            const enhanceRes = await fetch(window.CASHORA_CONFIG.video.enhancePrompt, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ prompt: userPrompt })
+            });
+            const enhanceData = await enhanceRes.json();
+
+            if (!enhanceData.success) {
+                throw new Error(enhanceData.error || 'Failed to enhance prompt');
+            }
+
+            console.log('✅ Prompt enhanced:', enhanceData.enhancedPrompt);
+
+            // Step 2: Generate video with Blotato
+            updateProgress(1, steps, 'Starting video generation...');
+
+            const generateRes = await fetch(window.CASHORA_CONFIG.video.generate, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    enhancedPrompt: enhanceData.enhancedPrompt,
+                    duration: parseInt(duration),
+                    aspectRatio: aspectRatio,
+                    visualStyle: visualStyle
+                })
+            });
+            const generateData = await generateRes.json();
+
+            if (!generateData.success) {
+                throw new Error(generateData.error || 'Failed to start video generation');
+            }
+
+            const videoId = generateData.videoId;
+            console.log('🎬 Video generation started:', videoId);
+
+            // Step 3-4: Poll for video status
+            await pollVideoStatus(videoId, steps, platforms);
+
+        } catch (err) {
+            console.error('Prompt-to-video error:', err);
+            alert('Video generation failed: ' + err.message);
+            resetCreate();
+        }
+    }
+
+    // Poll Blotato video status
+    async function pollVideoStatus(videoId, steps, platforms) {
+        const maxAttempts = 120; // 30 minutes max (120 * 15 seconds)
+        let attempts = 0;
+
+        const poll = async () => {
+            attempts++;
+            if (attempts > maxAttempts) {
+                throw new Error('Video generation timeout. Please check your Blotato dashboard.');
+            }
+
+            try {
+                const statusRes = await fetch(window.CASHORA_CONFIG.video.status(videoId), {
+                    credentials: 'include'
+                });
+                const statusData = await statusRes.json();
+
+                console.log(`📊 Status poll ${attempts}:`, statusData.status);
+
+                // Check for errors
+                if (statusData.error) {
+                    throw new Error(statusData.error);
+                }
+
+                // Map Blotato status to our progress steps
+                const statusMap = {
+                    'queueing': 1,
+                    'generating-script': 1,
+                    'script-ready': 2,
+                    'generating-media': 2,
+                    'media-ready': 3,
+                    'exporting': 3,
+                    'done': 4
+                };
+
+                const stepIndex = statusMap[statusData.status] || 1;
+                updateProgress(stepIndex, steps, statusData.message || 'Processing...');
+
+                // Video complete!
+                if (statusData.status === 'done' && statusData.mediaUrl) {
+                    console.log('✅ Video complete:', statusData.mediaUrl);
+                    finishVideoGeneration(statusData.mediaUrl, platforms);
+                    return;
+                }
+
+                // Failed
+                if (statusData.status === 'creation-from-template-failed' || statusData.status === 'insufficient-credits') {
+                    throw new Error(`Video generation failed: ${statusData.status}`);
+                }
+
+                // Continue polling
+                setTimeout(poll, 15000); // Poll every 15 seconds
+
+            } catch (err) {
+                throw err;
+            }
+        };
+
+        await poll();
+    }
+
+    // Helper: Update progress UI
+    function updateProgress(stepIndex, steps, message) {
+        if (stepIndex < steps.length) {
+            const s = steps[stepIndex];
+            document.getElementById('stepStatusText').textContent = message || s.label;
+            document.getElementById('stepStatusSub').textContent = s.sub;
+            document.getElementById('progressFill').style.width = s.progress + '%';
+        }
+
+        // Update stepper visual
+        stepIds.forEach((sid, idx) => {
+            const el = document.getElementById(sid);
+            if (!el) return;
+            el.classList.remove('active','done');
+            if (idx < stepIndex) { 
+                el.classList.add('done'); 
+                el.querySelector('.step-circle').innerHTML = '✓'; 
+            }
+            else if (idx === stepIndex) { 
+                el.classList.add('active'); 
+                el.querySelector('.step-circle').textContent = idx+1; 
+            }
+            else { 
+                el.querySelector('.step-circle').textContent = idx+1; 
+            }
+        });
+
+        lineIds.forEach((lid, idx) => {
+            const el = document.getElementById(lid);
+            if (!el) return;
+            el.classList.remove('done','active');
+            if (idx < stepIndex) el.classList.add('done');
+            else if (idx === stepIndex) el.classList.add('active');
+        });
+    }
+
+    // Finish video generation and show result
+    function finishVideoGeneration(videoUrl, platforms) {
+        // Show final step
+        updateProgress(4, promptSteps, 'Video complete!');
+
+        setTimeout(() => {
+            document.getElementById('progressPanel').classList.remove('visible');
+            document.getElementById('doneCard').classList.add('visible');
+
+            // Set video preview
+            const videoEl = document.getElementById('doneVideo');
+            if (videoEl) {
+                videoEl.src = videoUrl;
+                videoEl.style.display = 'block';
+            }
+
+            // Set download link
+            const downloadBtn = document.getElementById('doneDownloadBtn');
+            if (downloadBtn) {
+                downloadBtn.href = videoUrl;
+                downloadBtn.download = `cashora-video-${Date.now()}.mp4`;
+                downloadBtn.style.display = 'inline-flex';
+            }
+
+            // Store video URL globally for library/schedule actions
+            window._lastGeneratedVideoUrl = videoUrl;
+
+            console.log('🎉 Video generation complete!', videoUrl);
+        }, 1000);
     }
 
     function runStep(i, stepsList) {
@@ -3191,14 +3417,13 @@ function switchCreateTab(mode) {
     const uploadTab = document.getElementById('createUploadTab');
     const btnPrompt = document.getElementById('tabPrompt');
     const btnUpload = document.getElementById('tabUpload');
-    const videoLengthGroup = document.getElementById('videoLengthGroup');
-    const aspectRatioGroup = document.getElementById('aspectRatioGroup');
-    const generationStyleRow = document.getElementById('generationStyleRow');
+    const videoGenerationSettings = document.getElementById('videoGenerationSettings');
     const btnText = document.getElementById('generateBtnText');
     
     if (mode === 'prompt') {
         if (promptTab) promptTab.style.display = '';
         if (uploadTab) uploadTab.style.display = 'none';
+        if (videoGenerationSettings) videoGenerationSettings.style.display = '';
         if (btnPrompt) {
             btnPrompt.style.background = '#13183a';
             btnPrompt.style.color = '#6677ff';
@@ -3207,15 +3432,12 @@ function switchCreateTab(mode) {
             btnUpload.style.background = 'transparent';
             btnUpload.style.color = 'var(--muted)';
         }
-        // Show aspect ratio & video length for prompt generation
-        if (aspectRatioGroup) aspectRatioGroup.style.display = '';
-        if (generationStyleRow) generationStyleRow.style.gridTemplateColumns = '1fr 1fr';
-        if (videoLengthGroup) videoLengthGroup.style.display = '';
         // Button text: Generate Video
         if (btnText) btnText.textContent = 'Generate Video';
     } else if (mode === 'upload') {
         if (promptTab) promptTab.style.display = 'none';
         if (uploadTab) uploadTab.style.display = '';
+        if (videoGenerationSettings) videoGenerationSettings.style.display = 'none';
         if (btnUpload) {
             btnUpload.style.background = '#13183a';
             btnUpload.style.color = '#6677ff';
@@ -3224,10 +3446,6 @@ function switchCreateTab(mode) {
             btnPrompt.style.background = 'transparent';
             btnPrompt.style.color = 'var(--muted)';
         }
-        // Remove / hide aspect ratio & video length in upload section
-        if (aspectRatioGroup) aspectRatioGroup.style.display = 'none';
-        if (generationStyleRow) generationStyleRow.style.gridTemplateColumns = '1fr';
-        if (videoLengthGroup) videoLengthGroup.style.display = 'none';
         // Button text: Start Posting
         if (btnText) btnText.textContent = 'Start Posting';
     }

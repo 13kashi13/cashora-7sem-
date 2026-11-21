@@ -48,6 +48,12 @@ window.CASHORA_CONFIG = {
     improveCaption: `${API_BASE_URL}/api/ai/improve-caption`
   },
   
+  video: {
+    enhancePrompt: `${API_BASE_URL}/api/video/enhance-prompt`,
+    generate: `${API_BASE_URL}/api/video/generate`,
+    status: (id) => `${API_BASE_URL}/api/video/status/${id}`
+  },
+  
   youtube: {
     auth: `${API_BASE_URL}/auth/youtube`,
     callback: `${API_BASE_URL}/auth/youtube/callback`,

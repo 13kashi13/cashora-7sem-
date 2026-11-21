@@ -2702,6 +2702,238 @@ app.post('/api/discord/post', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════
+// ─── Prompt-to-Video Generation (Gemini + Blotato) ────────
+// ═══════════════════════════════════════════════════════════
+
+const BLOTATO_API_KEY = process.env.BLOTATO_API_KEY || '';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const BLOTATO_BASE_URL = 'https://backend.blotato.com/v2';
+
+// Enhance user prompt using Gemini API
+app.post('/api/video/enhance-prompt', async (req, res) => {
+  if (!GEMINI_API_KEY) {
+    return res.status(400).json({ 
+      success: false, 
+      error: 'Gemini API key not configured. Add GEMINI_API_KEY to .env' 
+    });
+  }
+
+  try {
+    const { prompt } = req.body;
+    if (!prompt || prompt.trim().length === 0) {
+      return res.status(400).json({ success: false, error: 'Prompt is required' });
+    }
+
+    const enhancementPrompt = `You are a professional video prompt engineer. Transform this user prompt into a detailed, cinematic video description suitable for AI video generation. Focus on visual details, atmosphere, camera movements, and mood. Keep it under 500 characters but make it vivid and engaging.
+
+User prompt: "${prompt}"
+
+Enhanced prompt:`;
+
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        contents: [{
+          parts: [{ text: enhancementPrompt }]
+        }]
+      },
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+
+    const enhancedPrompt = response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    
+    if (!enhancedPrompt) {
+      throw new Error('Failed to generate enhanced prompt from Gemini');
+    }
+
+    return res.json({
+      success: true,
+      originalPrompt: prompt,
+      enhancedPrompt: enhancedPrompt
+    });
+
+  } catch (err) {
+    console.error('Gemini prompt enhancement failed:', err.response?.data || err.message);
+    return res.status(500).json({ 
+      success: false, 
+      error: err.response?.data?.error?.message || err.message 
+    });
+  }
+});
+
+// Generate video using Blotato API
+app.post('/api/video/generate', async (req, res) => {
+  if (!BLOTATO_API_KEY) {
+    return res.status(400).json({ 
+      success: false, 
+      error: 'Blotato API key not configured. Add BLOTATO_API_KEY to .env' 
+    });
+  }
+
+  try {
+    const { enhancedPrompt, duration, aspectRatio, visualStyle } = req.body;
+
+    if (!enhancedPrompt || enhancedPrompt.trim().length === 0) {
+      return res.status(400).json({ success: false, error: 'Enhanced prompt is required' });
+    }
+
+    // First, get the "AI Video with AI Voice" template ID
+    const templatesRes = await axios.get(
+      `${BLOTATO_BASE_URL}/videos/templates?search=AI Video with AI Voice&fields=id,name,description,inputs`,
+      { headers: { 'blotato-api-key': BLOTATO_API_KEY } }
+    );
+
+    const template = templatesRes.data?.items?.[0];
+    if (!template || !template.id) {
+      throw new Error('AI Video with AI Voice template not found');
+    }
+
+    // Build the full prompt with user preferences
+    let fullPrompt = enhancedPrompt;
+    if (visualStyle) {
+      fullPrompt += `\n\nVisual Style: ${visualStyle}`;
+    }
+    if (duration) {
+      fullPrompt += `\nDuration: approximately ${duration} seconds`;
+    }
+    if (aspectRatio) {
+      fullPrompt += `\nAspect Ratio: ${aspectRatio}`;
+    }
+
+    // Create video with Blotato
+    const createPayload = {
+      templateId: template.id,
+      inputs: {},
+      prompt: fullPrompt,
+      render: true,
+      title: `AI Video - ${new Date().toISOString()}`
+    };
+
+    console.log('🎬 Creating Blotato video with prompt:', fullPrompt);
+
+    const createRes = await axios.post(
+      `${BLOTATO_BASE_URL}/videos/from-templates`,
+      createPayload,
+      { 
+        headers: { 
+          'blotato-api-key': BLOTATO_API_KEY,
+          'Content-Type': 'application/json'
+        } 
+      }
+    );
+
+    const videoId = createRes.data?.item?.id;
+    const status = createRes.data?.item?.status;
+
+    if (!videoId) {
+      throw new Error('No video ID returned from Blotato');
+    }
+
+    console.log('✅ Blotato video creation started:', videoId, 'Status:', status);
+
+    return res.json({
+      success: true,
+      videoId: videoId,
+      status: status,
+      message: 'Video generation started. Poll /api/video/status/:id for updates.'
+    });
+
+  } catch (err) {
+    console.error('Blotato video generation failed:', err.response?.data || err.message);
+    const statusCode = err.response?.status || 500;
+    const errorMsg = err.response?.data?.message || err.message;
+    
+    return res.status(statusCode).json({ 
+      success: false, 
+      error: errorMsg,
+      details: err.response?.data
+    });
+  }
+});
+
+// Check video generation status
+app.get('/api/video/status/:id', async (req, res) => {
+  if (!BLOTATO_API_KEY) {
+    return res.status(400).json({ 
+      success: false, 
+      error: 'Blotato API key not configured' 
+    });
+  }
+
+  try {
+    const { id } = req.params;
+
+    const statusRes = await axios.get(
+      `${BLOTATO_BASE_URL}/videos/creations/${id}`,
+      { headers: { 'blotato-api-key': BLOTATO_API_KEY } }
+    );
+
+    const item = statusRes.data?.item;
+
+    if (!item) {
+      return res.status(404).json({ success: false, error: 'Video not found' });
+    }
+
+    // Check if there's an error
+    if (item.error) {
+      return res.json({
+        success: false,
+        status: item.status,
+        error: item.error,
+        errorMetadata: item.errorMetadata,
+        videoId: id
+      });
+    }
+
+    // Success - video is done
+    if (item.status === 'done' && item.mediaUrl) {
+      return res.json({
+        success: true,
+        status: item.status,
+        videoId: id,
+        mediaUrl: item.mediaUrl,
+        imageUrls: item.imageUrls || [],
+        createdAt: item.createdAt,
+        message: 'Video generation complete!'
+      });
+    }
+
+    // Still processing
+    return res.json({
+      success: true,
+      status: item.status,
+      videoId: id,
+      message: getStatusMessage(item.status)
+    });
+
+  } catch (err) {
+    console.error('Blotato status check failed:', err.response?.data || err.message);
+    const statusCode = err.response?.status || 500;
+    
+    return res.status(statusCode).json({ 
+      success: false, 
+      error: err.response?.data?.message || err.message 
+    });
+  }
+});
+
+// Helper function for status messages
+function getStatusMessage(status) {
+  const messages = {
+    'queueing': 'Your video is in the queue...',
+    'generating-script': 'AI is writing the script...',
+    'script-ready': 'Script ready! Generating visuals...',
+    'generating-media': 'Creating video content...',
+    'media-ready': 'Media ready! Exporting video...',
+    'exporting': 'Final export in progress...',
+    'done': 'Video complete!',
+    'creation-from-template-failed': 'Video generation failed',
+    'insufficient-credits': 'Insufficient credits'
+  };
+  return messages[status] || 'Processing...';
+}
+
 // ─── Unified Dashboard Overview (Real Live Numbers) ─────────────────────────
 app.get('/api/dashboard/overview', async (req, res) => {
   try {
