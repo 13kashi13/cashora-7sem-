@@ -1,0 +1,56 @@
+═══════════════════════════════════════════════════════
+         VIDEO GENERATION - DEPLOYMENT STATUS
+═══════════════════════════════════════════════════════
+
+CURRENT SITUATION:
+------------------
+❌ UI Error: "gemini-2.0-flash-exp not found"
+   → This means Render is running OLD code
+
+CODE STATUS:
+------------------
+✅ Local:  gemini-3.6-flash (CORRECT)
+✅ GitHub: gemini-3.6-flash (CORRECT - commit 37627a5)
+❌ Render: gemini-2.0-flash-exp (WRONG - old deployment)
+
+WHAT HAPPENED:
+------------------
+1. You updated GEMINI_API_KEY in Render ✅
+2. Render auto-redeployed with OLD code ❌
+3. We pushed NEW code (37627a5) ✅
+4. Render hasn't deployed it yet ⏳
+
+WHAT YOU NEED TO DO:
+------------------
+🔧 MANUAL DEPLOY IN RENDER:
+
+1. Go to: https://dashboard.render.com
+2. Click: cashora-backend-1w64
+3. Click: "Manual Deploy" button (top right)
+4. Select: "Clear build cache & deploy"
+5. Wait: 2-3 minutes
+6. Test: Try video generation again
+
+WHY MANUAL DEPLOY:
+------------------
+Sometimes Render doesn't auto-deploy immediately after
+environment variable changes. Manual deploy forces it
+to pull and build the latest code from GitHub.
+
+AFTER DEPLOYMENT:
+------------------
+✅ Model will be: gemini-3.6-flash
+✅ Error will be: Gone!
+✅ Video generation will: WORK! 🎬
+
+VERIFICATION:
+------------------
+Test this URL after deployment:
+https://cashora-7sem-frontend.vercel.app/api/video/enhance-prompt
+
+Should return enhanced prompt, NOT "model not found" error.
+
+═══════════════════════════════════════════════════════
+           READ: RENDER_MANUAL_DEPLOY.md
+          FOR DETAILED STEP-BY-STEP GUIDE
+═══════════════════════════════════════════════════════
