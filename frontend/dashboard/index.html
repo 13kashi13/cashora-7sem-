@@ -2948,8 +2948,18 @@ async function startGenerate() {
             type: 'ai-generated',
             filePath: videoUrl
         }).then(() => {
-            alert('✅ Video saved to library! Go to Library page to see it.');
             console.log('✅ Manual save successful');
+            
+            // Automatically switch to library page
+            showPage('library');
+            
+            // Force re-render after a moment
+            setTimeout(() => {
+                fetchLibraryItems().then(() => {
+                    renderLibrary();
+                    alert('✅ Video saved to library! You are now viewing the Library page.');
+                });
+            }, 500);
         }).catch(err => {
             alert('❌ Failed to save: ' + err.message);
             console.error('❌ Manual save failed:', err);
@@ -3171,12 +3181,20 @@ async function addLibraryItem(item) {
     console.log('📝 Rendering library...');
     renderLibrary();
     
+    // Force refresh library display
+    if (window.location.hash === '#library' || document.querySelector('.page-container.active')?.id === 'libraryPage') {
+        console.log('🔄 Library page is active, forcing immediate refresh');
+        setTimeout(() => {
+            renderLibrary();
+        }, 100);
+    }
+    
     if (typeof loadDashboardOverview === 'function') {
         console.log('📝 Loading dashboard overview...');
         loadDashboardOverview();
     }
     
-    console.log('✅ addLibraryItem complete');
+    console.log('✅ addLibraryItem complete - Total items:', _cachedLibraryItems.length);
 }
 
 async function deleteLibraryItem(id) {
@@ -3277,18 +3295,27 @@ const THUMB_GRADIENTS = [
     'linear-gradient(135deg,#0d1a24,#12293b)'
 ];
 async function renderLibrary() {
+    console.log('🎨 renderLibrary() called');
+    
     const grid = document.getElementById('libraryGrid');
-    if (!grid) return;
+    if (!grid) {
+        console.error('❌ Library grid element not found!');
+        return;
+    }
 
     let items = await fetchLibraryItems();
+    console.log(`📚 Found ${items.length} items in library:`, items);
 
     if (currentLibFilter === 'published') {
         items = items.filter(it => it.status === 'published');
+        console.log(`🔍 Filtered to ${items.length} published items`);
     } else if (currentLibFilter === 'draft') {
         items = items.filter(it => it.status === 'draft');
+        console.log(`🔍 Filtered to ${items.length} draft items`);
     }
 
     if (items.length === 0) {
+        console.warn('⚠️ No items to display - showing empty state');
         grid.innerHTML = `
             <div style="grid-column: 1 / -1; text-align: center; padding: 60px 20px; background: #0e0e0e; border: 1px dashed var(--border); border-radius: 12px; margin-top: 10px;">
                 <div style="width: 50px; height: 50px; border-radius: 50%; background: #13183a; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; color: #6677ff;">
