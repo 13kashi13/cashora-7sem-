@@ -133,8 +133,8 @@ app.use(cookieSession({
   name: 'cashora.sid',
   keys: [sessionSecret],
   secure: process.env.NODE_ENV === 'production',
-  httpOnly: true,
-  sameSite: 'lax',
+  httpOnly: false, // Changed to false so frontend can access via document.cookie
+  sameSite: 'none', // Changed to 'none' for cross-site cookies
   maxAge: 24 * 60 * 60 * 1000 // 24 hours
 }));
 
