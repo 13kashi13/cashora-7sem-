@@ -2716,7 +2716,7 @@ const BLOTATO_BASE_URL = 'https://backend.blotato.com/v2';
 let genAI, geminiModel;
 if (GEMINI_API_KEY) {
   genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-  geminiModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+  geminiModel = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
 }
 
 // Debug endpoint - check video API configuration

@@ -25,7 +25,7 @@ if (!BLOTATO_API_KEY || !GEMINI_API_KEY) {
 
 // Initialize Gemini AI (supports both AIzaSy and AQ. keys)
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const geminiModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+const geminiModel = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
 
 async function testGemini() {
   console.log('📝 Step 1: Testing Gemini Prompt Enhancement...');
@@ -113,8 +113,8 @@ async function testBlotato(enhancedPrompt) {
       }
     );
 
-    const videoId = createRes.data?.video?.id;
-    const status = createRes.data?.video?.status;
+    const videoId = createRes.data?.item?.id || createRes.data?.video?.id;
+    const status = createRes.data?.item?.status || createRes.data?.video?.status;
     
     if (!videoId) {
       console.error('❌ Video creation failed - no video ID returned');
