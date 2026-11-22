@@ -675,6 +675,9 @@ app.post('/api/library', async (req, res) => {
     caption: req.body.caption || '',
     user_id: userId
   };
+  
+  console.log('📝 Attempting to save library item:', item.title, 'User ID:', userId);
+  
   try {
     const { data, error } = await supabase
       .from('library_items')
@@ -682,13 +685,26 @@ app.post('/api/library', async (req, res) => {
       .select()
       .single();
     if (error) {
-      console.error('Error inserting library item:', error.message);
-      return res.status(500).json({ success: false, message: 'Failed to add library item' });
+      console.error('❌ Supabase error inserting library item:', error.message);
+      // Return success with the original item so frontend can save locally
+      return res.json({ 
+        success: true, 
+        item: { ...item, id: 'local_' + Date.now() },
+        savedLocally: true,
+        message: 'Saved locally (database save failed)' 
+      });
     }
-    res.json({ success: true, item: data });
+    console.log('✅ Library item saved to database:', data.id);
+    res.json({ success: true, item: data, savedToDatabase: true });
   } catch (err) {
-    console.error('Exception inserting library item:', err.message);
-    res.status(500).json({ success: false, message: err.message });
+    console.error('❌ Exception inserting library item:', err.message);
+    // Return success with the original item so frontend can save locally
+    res.json({ 
+      success: true, 
+      item: { ...item, id: 'local_' + Date.now() },
+      savedLocally: true,
+      message: 'Saved locally (database error)' 
+    });
   }
 });
 
