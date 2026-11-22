@@ -2963,6 +2963,230 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const BLOTATO_API_KEY = process.env.BLOTATO_API_KEY || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const BLOTATO_BASE_URL = 'https://backend.blotato.com/v2';
+const BLOTATO_SOCIAL_PLATFORMS = new Set(['twitter', 'linkedin', 'facebook', 'instagram', 'pinterest', 'tiktok', 'threads', 'bluesky', 'youtube']);
+
+function requireBlotatoSession(req, res) {
+  if (!req.session || !req.session.user || !req.session.user.id) {
+    res.status(401).json({ success: false, message: 'Sign in before connecting or publishing through Blotato.' });
+    return false;
+  }
+  if (!BLOTATO_API_KEY) {
+    res.status(503).json({ success: false, message: 'Blotato is not connected yet. Add BLOTATO_API_KEY to the backend environment.' });
+    return false;
+  }
+  return true;
+}
+
+async function getBlotatoDestinations() {
+  const headers = { 'blotato-api-key': BLOTATO_API_KEY };
+  const accountsResponse = await axios.get(`${BLOTATO_BASE_URL}/users/me/accounts`, { headers, timeout: 30000 });
+  const accounts = Array.isArray(accountsResponse.data?.items) ? accountsResponse.data.items : [];
+  const destinations = [];
+  const warnings = [];
+  const addDestination = (platform, account, label, target = {}, keySuffix = '') => {
+    const accountId = String(account.id || '');
+    if (!accountId) return;
+    const suffix = keySuffix ? `:${keySuffix}` : '';
+    destinations.push({
+      key: `${platform}:${accountId}${suffix}`,
+      accountId,
+      platform,
+      label,
+      target
+    });
+  };
+
+  for (const account of accounts) {
+    const platform = String(account.platform || '').toLowerCase();
+    if (!BLOTATO_SOCIAL_PLATFORMS.has(platform) || !account.id) continue;
+    const accountLabel = account.fullname || account.username || `${platform} account`;
+    const handle = account.username ? ` @${String(account.username).replace(/^@/, '')}` : '';
+    const displayName = `${accountLabel}${handle}`;
+
+    if (platform === 'facebook' || platform === 'linkedin') {
+      try {
+        const subResponse = await axios.get(
+          `${BLOTATO_BASE_URL}/users/me/accounts/${encodeURIComponent(account.id)}/subaccounts`,
+          { headers, timeout: 30000 }
+        );
+        const subaccounts = Array.isArray(subResponse.data?.items) ? subResponse.data.items : [];
+        if (platform === 'linkedin') addDestination(platform, account, `${displayName} · Personal profile`, {}, 'profile');
+        for (const subaccount of subaccounts) {
+          const pageId = String(subaccount.id || '');
+          if (!pageId) continue;
+          addDestination(platform, account, `${displayName} · ${subaccount.name || 'Page'}`, { pageId }, `page:${pageId}`);
+        }
+        if (platform === 'facebook' && subaccounts.length === 0) warnings.push(`${displayName}: connect a Facebook Page in Blotato.`);
+      } catch (error) {
+        warnings.push(`${displayName}: could not load its Pages.`);
+      }
+      continue;
+    }
+
+    if (platform === 'pinterest') {
+      try {
+        const boardsResponse = await axios.get(`${BLOTATO_BASE_URL}/social/pinterest/boards`, {
+          headers,
+          params: { accountId: account.id },
+          timeout: 30000
+        });
+        const boards = Array.isArray(boardsResponse.data?.items) ? boardsResponse.data.items : [];
+        for (const board of boards) {
+          const boardId = String(board.id || '');
+          if (!boardId) continue;
+          addDestination(platform, account, `${displayName} · ${board.name || 'Board'}`, { boardId }, `board:${boardId}`);
+        }
+        if (!boards.length) warnings.push(`${displayName}: choose or connect a Pinterest board in Blotato.`);
+      } catch (error) {
+        warnings.push(`${displayName}: could not load its boards.`);
+      }
+      continue;
+    }
+
+    addDestination(platform, account, displayName);
+  }
+
+  return { destinations, warnings };
+}
+
+app.get('/api/blotato/destinations', async (req, res) => {
+  if (!requireBlotatoSession(req, res)) return;
+  try {
+    const { destinations, warnings } = await getBlotatoDestinations();
+    res.json({ success: true, destinations, warnings });
+  } catch (error) {
+    const code = error.response?.status || 502;
+    console.error('Could not load Blotato destinations:', error.response?.data || error.message);
+    res.status(code).json({ success: false, message: error.response?.data?.message || 'Could not connect to Blotato. Check the API key and connected accounts.' });
+  }
+});
+
+app.post('/api/library/:id/publish', async (req, res) => {
+  if (!requireBlotatoSession(req, res)) return;
+  const userId = req.session.user.id;
+  const selectedKeys = Array.isArray(req.body?.destinationKeys)
+    ? [...new Set(req.body.destinationKeys.map(value => String(value)))]
+    : [];
+  if (!selectedKeys.length) return res.status(400).json({ success: false, message: 'Select at least one Blotato account.' });
+  if (selectedKeys.length > 20) return res.status(400).json({ success: false, message: 'Select no more than 20 destinations in one post.' });
+
+  try {
+    const { data: libraryRow, error: libraryError } = await supabase
+      .from('library_items')
+      .select('*')
+      .eq('id', req.params.id)
+      .eq('user_id', userId)
+      .single();
+    if (libraryError || !libraryRow) return res.status(404).json({ success: false, message: 'This Library video was not found.' });
+
+    const { destinations } = await getBlotatoDestinations();
+    const byKey = new Map(destinations.map(destination => [destination.key, destination]));
+    const selectedDestinations = selectedKeys.map(key => byKey.get(key));
+    if (selectedDestinations.some(destination => !destination)) {
+      return res.status(400).json({ success: false, message: 'One or more selected Blotato accounts are no longer connected. Reload the account list.' });
+    }
+
+    const clientItem = await libraryItemForClient(libraryRow);
+    const mediaUrl = clientItem.filePath;
+    if (!mediaUrl || clientItem.storageUnavailable) {
+      return res.status(409).json({ success: false, message: 'This video does not have a playable storage link. Reopen the Library and save it permanently before posting.' });
+    }
+    if (!/^https:\/\//i.test(mediaUrl)) {
+      return res.status(400).json({ success: false, message: 'Blotato needs a publicly reachable HTTPS video link.' });
+    }
+
+    const caption = String(req.body?.caption || libraryRow.caption || libraryRow.title || '').slice(0, 5000);
+    const youtubePrivacy = ['public', 'unlisted', 'private'].includes(req.body?.youtubePrivacy)
+      ? req.body.youtubePrivacy
+      : 'public';
+    const submissions = [];
+    const failures = [];
+
+    for (const destination of selectedDestinations) {
+      const target = { targetType: destination.platform, ...destination.target };
+      const content = { text: caption, mediaUrls: [mediaUrl], platform: destination.platform };
+
+      if (destination.platform === 'instagram' || destination.platform === 'facebook') target.mediaType = 'reel';
+      if (destination.platform === 'tiktok') {
+        Object.assign(target, {
+          privacyLevel: req.body?.tiktokPrivacy === 'SELF_ONLY' ? 'SELF_ONLY' : 'PUBLIC_TO_EVERYONE',
+          disabledComments: false,
+          disabledDuet: false,
+          disabledStitch: false,
+          isBrandedContent: false,
+          isYourBrand: false,
+          isAiGenerated: String(libraryRow.type || '').toLowerCase().includes('ai')
+        });
+      }
+      if (destination.platform === 'youtube') {
+        Object.assign(target, {
+          title: String(libraryRow.title || 'Video').slice(0, 100),
+          privacyStatus: youtubePrivacy,
+          shouldNotifySubscribers: req.body?.notifySubscribers !== false,
+          containsSyntheticMedia: String(libraryRow.type || '').toLowerCase().includes('ai')
+        });
+      }
+
+      try {
+        const response = await axios.post(`${BLOTATO_BASE_URL}/posts`, {
+          post: { accountId: destination.accountId, content, target }
+        }, {
+          headers: { 'blotato-api-key': BLOTATO_API_KEY, 'Content-Type': 'application/json' },
+          timeout: 45000
+        });
+        const postSubmissionId = response.data?.postSubmissionId;
+        if (!postSubmissionId) throw new Error('Blotato accepted the request without returning a status ID.');
+        submissions.push({
+          destinationKey: destination.key,
+          label: destination.label,
+          platform: destination.platform,
+          postSubmissionId,
+          scheduledTime: response.data?.scheduledTime || null
+        });
+      } catch (error) {
+        console.error(`Blotato publish failed for ${destination.key}:`, error.response?.data || error.message);
+        failures.push({
+          destinationKey: destination.key,
+          label: destination.label,
+          platform: destination.platform,
+          message: error.response?.data?.message || error.message || 'Blotato rejected this destination.'
+        });
+      }
+    }
+
+    if (!submissions.length) {
+      return res.status(502).json({ success: false, submissions, failures, message: 'Blotato could not submit the video to the selected accounts.' });
+    }
+    return res.status(202).json({
+      success: true,
+      submissions,
+      failures,
+      message: `Submitted to ${submissions.length} Blotato account${submissions.length === 1 ? '' : 's'}.`
+    });
+  } catch (error) {
+    console.error('Blotato publish request failed:', error.response?.data || error.message);
+    const code = error.response?.status || 502;
+    return res.status(code).json({ success: false, message: error.response?.data?.message || error.message || 'Could not publish through Blotato.' });
+  }
+});
+
+app.get('/api/blotato/posts/:submissionId', async (req, res) => {
+  if (!requireBlotatoSession(req, res)) return;
+  if (!/^[A-Za-z0-9_-]{1,200}$/.test(req.params.submissionId)) {
+    return res.status(400).json({ success: false, message: 'Invalid Blotato submission ID.' });
+  }
+  try {
+    const response = await axios.get(`${BLOTATO_BASE_URL}/posts/${encodeURIComponent(req.params.submissionId)}`, {
+      headers: { 'blotato-api-key': BLOTATO_API_KEY },
+      timeout: 30000
+    });
+    res.json({ success: true, post: response.data });
+  } catch (error) {
+    console.error('Could not check Blotato publish status:', error.response?.data || error.message);
+    const code = error.response?.status || 502;
+    res.status(code).json({ success: false, message: error.response?.data?.message || 'Could not check the Blotato publish status.' });
+  }
+});
 
 // Initialize Gemini AI (supports both AIzaSy and AQ. keys)
 let genAI, geminiModel;

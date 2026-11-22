@@ -3302,46 +3302,132 @@ async function deleteLibraryItem(id) {
     if (typeof loadDashboardOverview === 'function') loadDashboardOverview();
 }
 
-function publishDraftItem(id) {
-    const items = getLibraryItems();
-    const item = items.find(it => it.id === id);
-    if (!item) return;
+let publishModalItemId = null;
+let publishModalDestinations = [];
 
-    // Preload into schedule form
-    _schedulePreloadFile = null;
-    _schedulePreloadPath = item.filePath || '';
-    _schedulePreloadCaption = item.title || '';
-    _schedulePreloadPlatforms = item.platforms || ['YouTube', 'Instagram'];
+function setPublishModalMessage(message, isError = false) {
+    const box = document.getElementById('publishModalMessage');
+    if (!box) return;
+    box.textContent = message;
+    box.style.display = message ? 'block' : 'none';
+    box.style.background = isError ? 'rgba(239,68,68,.12)' : 'rgba(74,222,128,.12)';
+    box.style.color = isError ? '#fca5a5' : '#86efac';
+}
 
-    // Update status to published on server as well
-    fetch(window.CASHORA_CONFIG.library.update(id), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'published' })
-    }).then(r => r.json()).then(d => {
-        if (d.success && d.item) {
-            const idx = _cachedLibraryItems.findIndex(it => it.id === id);
-            if (idx !== -1) _cachedLibraryItems[idx] = d.item;
-            try { localStorage.setItem(DEFAULT_STORAGE_KEY, JSON.stringify(_cachedLibraryItems)); } catch(e){}
+function renderPublishDestinations() {
+    const container = document.getElementById('publishDestinations');
+    const postButton = document.getElementById('publishNowButton');
+    const selectAll = document.getElementById('publishSelectAll');
+    if (!container) return;
+    if (!publishModalDestinations.length) {
+        container.innerHTML = '<div style="padding:18px;text-align:center;color:#c4c6cf;font-size:13px;">No Blotato accounts are available. Connect accounts in Blotato, then reload.</div>';
+        if (postButton) postButton.disabled = true;
+        return;
+    }
+    container.innerHTML = publishModalDestinations.map(destination => `
+        <label style="display:flex;align-items:center;gap:10px;padding:10px;border-bottom:1px solid #24262d;color:#e8e9ed;font-size:13px;cursor:pointer;">
+            <input type="checkbox" class="publish-destination-checkbox" value="${escapeHtml(destination.key)}" onchange="updatePublishSelection()">
+            <span style="flex:1;">${escapeHtml(destination.label)}</span>
+            <span style="color:#9a9da8;font-size:11px;">${escapeHtml(destination.platform)}</span>
+        </label>`).join('');
+    if (selectAll) selectAll.checked = false;
+    if (postButton) postButton.disabled = true;
+}
+
+function updatePublishSelection() {
+    const selected = document.querySelectorAll('.publish-destination-checkbox:checked').length;
+    const total = document.querySelectorAll('.publish-destination-checkbox').length;
+    const selectAll = document.getElementById('publishSelectAll');
+    const postButton = document.getElementById('publishNowButton');
+    if (selectAll) selectAll.checked = total > 0 && selected === total;
+    if (postButton) postButton.disabled = selected === 0;
+}
+
+async function openPublishDialog(id) {
+    const item = getLibraryItems().find(entry => String(entry.id) === String(id));
+    if (!item) return alert('This video is no longer in your Library. Refresh the Library and try again.');
+    const modal = document.getElementById('publishModal');
+    if (!modal) return alert('The publishing window is unavailable. Reload the page and try again.');
+    publishModalItemId = id;
+    publishModalDestinations = [];
+    setPublishModalMessage('');
+    const title = item.title || 'Library video';
+    document.getElementById('publishModalVideoTitle').textContent = title;
+    document.getElementById('publishCaption').value = item.caption || title;
+    document.getElementById('publishDestinations').innerHTML = '<div style="padding:18px;text-align:center;color:#9da0aa;font-size:13px;">Loading Blotato accounts…</div>';
+    document.getElementById('publishSelectAll').checked = false;
+    document.getElementById('publishNowButton').disabled = true;
+    const warningBox = document.getElementById('publishModalWarnings');
+    if (warningBox) {
+        warningBox.textContent = '';
+        warningBox.style.display = 'none';
+    }
+    modal.style.display = 'flex';
+    try {
+        const response = await fetch(window.CASHORA_CONFIG.blotato.destinations, { credentials: 'include' });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.message || 'Could not load Blotato accounts.');
+        publishModalDestinations = Array.isArray(data.destinations) ? data.destinations : [];
+        renderPublishDestinations();
+        const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+        const warningBox = document.getElementById('publishModalWarnings');
+        if (warningBox) {
+            warningBox.textContent = warnings.join(' ');
+            warningBox.style.display = warnings.length ? 'block' : 'none';
         }
-    }).catch(()=>{});
-
-    const navBtn = Array.from(document.querySelectorAll('.nav-item')).find(b => b.textContent.trim() === 'Schedule');
-    showPage('schedule', navBtn);
-    populateScheduleForm();
-
-    const lbl = document.getElementById('scheduleVideoLabel');
-    if (lbl) {
-        lbl.textContent = item.title + (item.filePath ? ' (Attached from Library)' : ' (AI Draft from Library)');
-        lbl.style.color = '#4ade80';
+        if (!publishModalDestinations.length) setPublishModalMessage('Connect at least one account in Blotato before posting.', true);
+    } catch (error) {
+        document.getElementById('publishDestinations').innerHTML = `<div style="padding:18px;text-align:center;color:#fca5a5;font-size:13px;">${escapeHtml(error.message)}</div>`;
+        setPublishModalMessage(error.message, true);
     }
+}
 
-    const msg = document.getElementById('scheduleFormMsg');
-    if (msg) {
-        msg.style.display = 'block';
-        msg.style.color = '#8899ff';
-        msg.textContent = `Pre-loaded "${item.title}". Select your publish time and click Schedule Post.`;
+function closePublishDialog() {
+    const modal = document.getElementById('publishModal');
+    if (modal) modal.style.display = 'none';
+    publishModalItemId = null;
+}
+
+async function submitLibraryPost() {
+    if (!publishModalItemId) return;
+    const destinationKeys = Array.from(document.querySelectorAll('.publish-destination-checkbox:checked')).map(input => input.value);
+    if (!destinationKeys.length) return setPublishModalMessage('Choose at least one account before posting.', true);
+    const postButton = document.getElementById('publishNowButton');
+    const originalText = postButton.textContent;
+    postButton.disabled = true;
+    postButton.textContent = 'Submitting…';
+    setPublishModalMessage('Sending your video to Blotato. Each selected account will be submitted separately.');
+    try {
+        const response = await fetch(window.CASHORA_CONFIG.blotato.publish(publishModalItemId), {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                destinationKeys,
+                caption: document.getElementById('publishCaption').value.trim(),
+                youtubePrivacy: document.getElementById('publishYoutubePrivacy').value,
+                notifySubscribers: document.getElementById('publishNotifySubscribers').checked
+            })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            const failed = (data.failures || []).map(entry => `${entry.label}: ${entry.message}`).join(' · ');
+            throw new Error([data.message, failed].filter(Boolean).join(' '));
+        }
+        const submitted = (data.submissions || []).map(entry => entry.label).join(', ');
+        const failed = (data.failures || []).map(entry => `${entry.label}: ${entry.message}`).join(' · ');
+        const finalStatusNote = data.failures?.length ? '' : ' Blotato accepted the requests; check its posting logs for final platform results.';
+        setPublishModalMessage(`${data.message}${submitted ? ` (${submitted})` : ''}${failed ? ` Failures: ${failed}` : ''}${finalStatusNote}`, !!data.failures?.length);
+    } catch (error) {
+        setPublishModalMessage(error.message || 'Could not submit this video to Blotato.', true);
+    } finally {
+        postButton.textContent = originalText;
+        updatePublishSelection();
     }
+}
+
+function publishDraftItem(id) {
+    openPublishDialog(id);
 }
 
 function republishItem(id) {
@@ -4796,6 +4882,42 @@ window.addEventListener('DOMContentLoaded', function() {
 
 </script>
 <script src="charts.js"></script>
+<!-- Blotato account selection and immediate publishing -->
+<div id="publishModal" style="display:none;position:fixed;inset:0;padding:24px 16px;box-sizing:border-box;overflow:auto;background:rgba(0,0,0,0.88);z-index:10001;align-items:center;justify-content:center;">
+    <div style="width:min(680px,96vw);max-height:calc(100vh - 48px);overflow:auto;background:#101114;border:1px solid #30313a;border-radius:16px;padding:24px;color:#f2f2f2;box-shadow:0 24px 80px rgba(0,0,0,.55);">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px;">
+            <div>
+                <div style="font-size:21px;font-weight:700;margin-bottom:5px;">Post with Blotato</div>
+                <div id="publishModalVideoTitle" style="font-size:13px;color:#a7a9b1;"></div>
+            </div>
+            <button onclick="closePublishDialog()" aria-label="Close" style="background:transparent;border:0;color:#bbb;font-size:26px;cursor:pointer;line-height:1;">×</button>
+        </div>
+        <label for="publishCaption" style="display:block;font-size:12px;color:#c7c9d0;margin-bottom:7px;">Caption</label>
+        <textarea id="publishCaption" rows="4" maxlength="5000" style="width:100%;box-sizing:border-box;background:#090a0c;border:1px solid #333640;border-radius:9px;color:#f4f4f5;padding:11px 12px;resize:vertical;font:inherit;font-size:13px;"></textarea>
+        <div style="display:flex;flex-wrap:wrap;gap:16px;margin:12px 0 18px;font-size:12px;color:#c7c9d0;">
+            <label style="display:flex;align-items:center;gap:7px;">YouTube visibility
+                <select id="publishYoutubePrivacy" style="background:#090a0c;border:1px solid #333640;border-radius:6px;color:#fff;padding:6px 8px;">
+                    <option value="public">Public</option><option value="unlisted">Unlisted</option><option value="private">Private</option>
+                </select>
+            </label>
+            <label style="display:flex;align-items:center;gap:7px;"><input id="publishNotifySubscribers" type="checkbox" checked> Notify YouTube subscribers</label>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <div style="font-size:13px;font-weight:650;">Choose destination accounts</div>
+            <label style="font-size:12px;color:#b7b9c2;display:flex;align-items:center;gap:6px;"><input id="publishSelectAll" type="checkbox" onchange="document.querySelectorAll('.publish-destination-checkbox').forEach(input => { input.checked = this.checked; }); updatePublishSelection();"> Select all</label>
+        </div>
+        <div id="publishDestinations" style="min-height:72px;max-height:250px;overflow:auto;background:#090a0c;border:1px solid #292b33;border-radius:9px;padding:8px;">
+            <div style="padding:18px;text-align:center;color:#9da0aa;font-size:13px;">Loading Blotato accounts…</div>
+        </div>
+        <div id="publishModalMessage" style="display:none;margin-top:10px;padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.5;"></div>
+        <div id="publishModalWarnings" style="display:none;margin-top:9px;color:#e7c98b;font-size:11px;line-height:1.5;"></div>
+        <div style="display:flex;justify-content:flex-end;gap:9px;margin-top:18px;">
+            <button onclick="closePublishDialog()" class="v-btn del">Cancel</button>
+            <button id="publishNowButton" onclick="submitLibraryPost()" class="v-btn publish" disabled>Post to selected accounts now</button>
+        </div>
+        <div style="margin-top:12px;color:#858894;font-size:11px;line-height:1.5;">This publishes immediately to every checked account. Connect or manage accounts in <a href="https://my.blotato.com/accounts" target="_blank" rel="noopener noreferrer" style="color:#aab4ff;">Blotato Accounts</a>.</div>
+    </div>
+</div>
 <!-- Video Modal for Fullscreen View -->
 <div id="videoModal" style="display:none;position:fixed;inset:0;padding:56px 16px 24px;box-sizing:border-box;overflow:auto;background:rgba(0,0,0,0.96);z-index:10000;align-items:center;justify-content:center;">
     <div style="position:relative;width:min(96vw,1400px);max-height:calc(100vh - 80px);display:flex;flex-direction:column;align-items:center;justify-content:center;">

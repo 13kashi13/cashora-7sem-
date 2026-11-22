@@ -40,6 +40,12 @@ window.CASHORA_CONFIG = {
     update: (id) => `${API_BASE_URL}/api/library/${id}`,
     delete: (id) => `${API_BASE_URL}/api/library/${id}`
   },
+
+  blotato: {
+    destinations: `${API_BASE_URL}/api/blotato/destinations`,
+    publish: (id) => `${API_BASE_URL}/api/library/${id}/publish`,
+    postStatus: (id) => `${API_BASE_URL}/api/blotato/posts/${id}`
+  },
   
   automation: {
     settings: `${API_BASE_URL}/api/automation-settings`
