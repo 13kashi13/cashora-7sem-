@@ -3143,8 +3143,25 @@ async function addLibraryItem(item) {
     
     console.log('📝 Prepared item for save:', newItem);
     
+    // IMPORTANT: Add to cached array FIRST before any API calls
+    _cachedLibraryItems.unshift(newItem);
+    console.log('✅ Added to _cachedLibraryItems. Total:', _cachedLibraryItems.length);
+    
+    // Save to localStorage immediately
+    try { 
+        localStorage.setItem(DEFAULT_STORAGE_KEY, JSON.stringify(_cachedLibraryItems)); 
+        console.log('✅ Saved to localStorage');
+    } catch(e){
+        console.error('❌ Error saving to localStorage:', e);
+    }
+    
+    // Render immediately with cached data
+    console.log('📝 Rendering library with cached data...');
+    renderLibrary();
+    
+    // Now try to save to server (non-blocking)
     try {
-        console.log('📝 Sending to:', window.CASHORA_CONFIG.library.create);
+        console.log('📝 Sending to server:', window.CASHORA_CONFIG.library.create);
         
         const res = await fetch(window.CASHORA_CONFIG.library.create, {
             method: 'POST',
@@ -3153,33 +3170,27 @@ async function addLibraryItem(item) {
             body: JSON.stringify(newItem)
         });
         
-        console.log('📝 Response status:', res.status);
+        console.log('📝 Server response status:', res.status);
         
         const data = await res.json();
-        console.log('📝 Response data:', data);
+        console.log('📝 Server response data:', data);
         
         if (data.success && data.item) {
             console.log('✅ Server saved successfully');
-            _cachedLibraryItems.unshift(data.item);
+            // Update the item with server ID if different
+            const index = _cachedLibraryItems.findIndex(it => it.id === newItem.id);
+            if (index !== -1 && data.item.id !== newItem.id) {
+                _cachedLibraryItems[index] = data.item;
+                localStorage.setItem(DEFAULT_STORAGE_KEY, JSON.stringify(_cachedLibraryItems));
+                console.log('✅ Updated with server ID');
+            }
         } else {
-            console.warn('⚠️ Server save failed, using local fallback');
-            _cachedLibraryItems.unshift(newItem);
+            console.warn('⚠️ Server save failed, but local save succeeded');
         }
     } catch(e) {
         console.error('❌ Error saving to server:', e);
-        console.log('📝 Using local fallback');
-        _cachedLibraryItems.unshift(newItem);
+        console.log('✅ Local save succeeded, server save failed (that\'s okay)');
     }
-    
-    try { 
-        localStorage.setItem(DEFAULT_STORAGE_KEY, JSON.stringify(_cachedLibraryItems)); 
-        console.log('✅ Saved to localStorage');
-    } catch(e){
-        console.error('❌ Error saving to localStorage:', e);
-    }
-    
-    console.log('📝 Rendering library...');
-    renderLibrary();
     
     // Force refresh library display
     if (window.location.hash === '#library' || document.querySelector('.page-container.active')?.id === 'libraryPage') {
@@ -3303,8 +3314,12 @@ async function renderLibrary() {
         return;
     }
 
-    let items = await fetchLibraryItems();
-    console.log(`📚 Found ${items.length} items in library:`, items);
+    // Use cached items first, only fetch from server if cache is empty
+    let items = _cachedLibraryItems && _cachedLibraryItems.length > 0 
+        ? _cachedLibraryItems 
+        : await fetchLibraryItems();
+        
+    console.log(`📚 Rendering ${items.length} items:`, items);
 
     if (currentLibFilter === 'published') {
         items = items.filter(it => it.status === 'published');
