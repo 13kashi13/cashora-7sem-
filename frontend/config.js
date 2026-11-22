@@ -87,6 +87,12 @@ window.CASHORA_CONFIG = {
     analytics: `${API_BASE_URL}/api/analytics/bluesky`
   },
   
+  discord: {
+    status: `${API_BASE_URL}/api/discord/status`,
+    analytics: `${API_BASE_URL}/api/discord/analytics`,
+    post: `${API_BASE_URL}/api/discord/post`
+  },
+  
   dashboard: {
     overview: `${API_BASE_URL}/api/dashboard/overview`
   }
