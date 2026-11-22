@@ -6,6 +6,7 @@
 
 require('dotenv').config();
 const axios = require('axios');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const BLOTATO_API_KEY = process.env.BLOTATO_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -22,6 +23,10 @@ if (!BLOTATO_API_KEY || !GEMINI_API_KEY) {
   process.exit(1);
 }
 
+// Initialize Gemini AI (supports both AIzaSy and AQ. keys)
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+const geminiModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+
 async function testGemini() {
   console.log('📝 Step 1: Testing Gemini Prompt Enhancement...');
   
@@ -33,24 +38,15 @@ User prompt: "${prompt}"
 Enhanced prompt:`;
 
   try {
-    const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        contents: [{
-          parts: [{ text: enhancementPrompt }]
-        }]
-      },
-      { 
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 30000
-      }
-    );
+    const keyType = GEMINI_API_KEY.startsWith('AQ.') ? 'AQ. auth key' : 'AIzaSy API key';
+    console.log('Using Google AI SDK with', keyType);
 
-    const enhancedPrompt = response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    const result = await geminiModel.generateContent(enhancementPrompt);
+    const response = await result.response;
+    const enhancedPrompt = response.text()?.trim();
     
     if (!enhancedPrompt) {
       console.error('❌ Gemini API returned empty response');
-      console.log('Response:', JSON.stringify(response.data, null, 2));
       return null;
     }
 
@@ -63,11 +59,9 @@ Enhanced prompt:`;
 
   } catch (err) {
     console.error('❌ Gemini API Error:');
+    console.error(err.message);
     if (err.response) {
-      console.error('Status:', err.response.status);
-      console.error('Error:', JSON.stringify(err.response.data, null, 2));
-    } else {
-      console.error(err.message);
+      console.error('Response:', err.response);
     }
     return null;
   }

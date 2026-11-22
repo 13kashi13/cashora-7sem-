@@ -2707,9 +2707,17 @@ app.post('/api/discord/post', async (req, res) => {
 // ─── Prompt-to-Video Generation (Gemini + Blotato) ────────
 // ═══════════════════════════════════════════════════════════
 
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const BLOTATO_API_KEY = process.env.BLOTATO_API_KEY || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const BLOTATO_BASE_URL = 'https://backend.blotato.com/v2';
+
+// Initialize Gemini AI (supports both AIzaSy and AQ. keys)
+let genAI, geminiModel;
+if (GEMINI_API_KEY) {
+  genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+  geminiModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+}
 
 // Debug endpoint - check video API configuration
 app.get('/api/video/config-check', (req, res) => {
@@ -2732,7 +2740,7 @@ app.get('/api/video/config-check', (req, res) => {
 
 // Enhance user prompt using Gemini API
 app.post('/api/video/enhance-prompt', async (req, res) => {
-  if (!GEMINI_API_KEY) {
+  if (!GEMINI_API_KEY || !geminiModel) {
     return res.status(400).json({ 
       success: false, 
       error: 'Gemini API key not configured. Add GEMINI_API_KEY to .env' 
@@ -2751,21 +2759,16 @@ User prompt: "${prompt}"
 
 Enhanced prompt:`;
 
-    const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        contents: [{
-          parts: [{ text: enhancementPrompt }]
-        }]
-      },
-      { headers: { 'Content-Type': 'application/json' } }
-    );
-
-    const enhancedPrompt = response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    // Use Google AI SDK (supports both AIzaSy and AQ. keys)
+    const result = await geminiModel.generateContent(enhancementPrompt);
+    const response = await result.response;
+    const enhancedPrompt = response.text()?.trim();
     
     if (!enhancedPrompt) {
       throw new Error('Failed to generate enhanced prompt from Gemini');
     }
+
+    console.log('✅ Gemini prompt enhancement successful');
 
     return res.json({
       success: true,
@@ -2774,10 +2777,10 @@ Enhanced prompt:`;
     });
 
   } catch (err) {
-    console.error('Gemini prompt enhancement failed:', err.response?.data || err.message);
+    console.error('Gemini prompt enhancement failed:', err.message);
     return res.status(500).json({ 
       success: false, 
-      error: err.response?.data?.error?.message || err.message 
+      error: err.message 
     });
   }
 });
