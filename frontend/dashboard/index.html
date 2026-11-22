@@ -260,6 +260,8 @@
         .video-card:hover { border-color: #2a2a2a; }
 
         .video-thumb { width: 100%; aspect-ratio: 16/9; background: #0e0e0e; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
+        .video-thumb video { width: 100%; height: 100%; object-fit: cover; position: absolute; inset: 0; pointer-events: none; }
+        .thumb-unavailable { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 12px; background: rgba(0,0,0,.52); color: #d1d5db; font-size: 12px; text-align: center; }
         .thumb-gradient { position: absolute; inset: 0; }
         .thumb-play { width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.15); display: flex; align-items: center; justify-content: center; z-index: 1; }
 
@@ -3539,17 +3541,21 @@ async function renderLibrary() {
             ? `<span class="badge muted">Draft</span>` 
             : `<span class="badge green">Published</span>`;
         const grad = THUMB_GRADIENTS[idx % THUMB_GRADIENTS.length];
+        const playbackUrl = item.filePath || '';
+        const safeTitle = escapeHtml(item.title || 'Untitled video');
+        const safeDate = escapeHtml(item.date || '');
         const platIcons = (item.platforms || []).map(p => getPlatformIcon(p)).join('');
 
         return `
-            <div class="video-card" id="card-${item.id}">
-                <div class="video-thumb" style="background:${grad};position:relative;overflow:hidden;cursor:pointer;" onclick="openVideoModal('${item.filePath}', '${item.title.replace(/'/g, "\\'")}')">
-                    ${item.filePath ? `
-                        <video src="${item.filePath}" style="width:100%;height:100%;object-fit:cover;position:absolute;top:0;left:0;" preload="metadata" onmouseover="this.play()" onmouseout="this.pause()"></video>
+            <div class="video-card" id="card-${escapeHtml(item.id)}">
+                <div class="video-thumb" ${playbackUrl ? `data-video-url="${escapeHtml(playbackUrl)}" data-video-title="${safeTitle}" role="button" tabindex="0" aria-label="Preview ${safeTitle}"` : 'aria-label="Video preview unavailable"'} style="background:${grad};cursor:${playbackUrl ? 'pointer' : 'default'};">
+                    ${playbackUrl ? `
+                        <video src="${escapeHtml(playbackUrl)}" muted playsinline preload="metadata" aria-hidden="true"></video>
+                        <div class="thumb-unavailable" style="display:none;">Preview unavailable</div>
                     ` : ''}
-                    <div class="thumb-play" style="position:relative;z-index:2;">
+                    ${playbackUrl ? `<div class="thumb-play" style="position:relative;z-index:2;">
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="#fff"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                    </div>
+                    </div>` : `<div class="thumb-unavailable">Video preview is not available</div>`}
                     ${item.type ? `
                         <div style="position:absolute;top:8px;left:8px;z-index:2;">
                             <span class="badge" style="background:rgba(0,0,0,0.7);font-size:10px;text-transform:uppercase;">
@@ -3559,9 +3565,9 @@ async function renderLibrary() {
                     ` : ''}
                 </div>
                 <div class="video-body">
-                    <div class="video-title" title="${item.title}">${item.title}</div>
+                    <div class="video-title" title="${safeTitle}">${safeTitle}</div>
                     <div class="video-meta">
-                        <span class="video-date">${item.date}</span>
+                        <span class="video-date">${safeDate}</span>
                         <div style="display:flex;align-items:center;gap:6px;">
                             ${badge}
                             <div class="platform-icons">
@@ -3604,6 +3610,41 @@ async function renderLibrary() {
             </div>
         `;
     }).join('');
+
+    grid.querySelectorAll('.video-thumb[data-video-url]').forEach(thumb => {
+        const video = thumb.querySelector('video');
+        const unavailable = thumb.querySelector('.thumb-unavailable');
+        if (!video) return;
+
+        video.addEventListener('loadedmetadata', () => {
+            if (Number.isFinite(video.duration) && video.duration > 0) {
+                try { video.currentTime = Math.min(0.25, video.duration / 2); } catch (_error) {}
+            }
+        }, { once: true });
+        video.addEventListener('seeked', () => {
+            video.dataset.frameReady = 'true';
+            if (!thumb.matches(':hover')) video.pause();
+        }, { once: true });
+        video.addEventListener('error', () => {
+            video.dataset.failed = 'true';
+            video.style.display = 'none';
+            if (unavailable) unavailable.style.display = 'flex';
+        });
+        thumb.addEventListener('mouseenter', () => {
+            if (!video.dataset.failed) video.play().catch(() => {});
+        });
+        thumb.addEventListener('mouseleave', () => {
+            video.pause();
+            if (video.dataset.frameReady) video.currentTime = Math.min(0.25, (video.duration || 0.5) / 2);
+        });
+        thumb.addEventListener('click', () => openVideoModal(thumb.dataset.videoUrl, thumb.dataset.videoTitle));
+        thumb.addEventListener('keydown', event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                openVideoModal(thumb.dataset.videoUrl, thumb.dataset.videoTitle);
+            }
+        });
+    });
 }
 
 // ── Platform analytics switcher
@@ -4934,6 +4975,10 @@ window.addEventListener('DOMContentLoaded', function() {
 </div>
 
 <script>
+function handleVideoModalKeydown(event) {
+    if (event.key === 'Escape') closeVideoModal();
+}
+
 function openVideoModal(videoUrl, videoTitle) {
     const modal = document.getElementById('videoModal');
     const video = document.getElementById('modalVideo');
@@ -4943,12 +4988,19 @@ function openVideoModal(videoUrl, videoTitle) {
     
     errorMessage.style.display = 'none';
     errorMessage.textContent = '';
+    video.muted = true;
     video.onerror = function() {
-        errorMessage.textContent = 'This video could not be loaded. Refresh the Library to get a fresh playback link. Older browser-only links may have expired.';
+        errorMessage.textContent = 'This video file could not be loaded. Refresh the Library to renew its playback link. If it is an older upload, the original file may need to be uploaded again.';
         errorMessage.style.display = 'block';
     };
     video.onloadedmetadata = function() {
         errorMessage.style.display = 'none';
+    };
+    video.oncanplay = function() {
+        video.play().catch(() => {
+            errorMessage.textContent = 'Video is ready. Press play to start previewing it.';
+            errorMessage.style.display = 'block';
+        });
     };
     source.src = videoUrl || '';
     title.textContent = videoTitle || 'Video Preview';
@@ -4968,12 +5020,7 @@ function openVideoModal(videoUrl, videoTitle) {
     };
     
     // Close on Escape key
-    document.addEventListener('keydown', function escapeHandler(e) {
-        if (e.key === 'Escape') {
-            closeVideoModal();
-            document.removeEventListener('keydown', escapeHandler);
-        }
-    });
+    document.addEventListener('keydown', handleVideoModalKeydown);
 }
 
 function closeVideoModal() {
@@ -4981,7 +5028,8 @@ function closeVideoModal() {
     const video = document.getElementById('modalVideo');
     
     video.pause();
-    video.currentTime = 0;
+    try { video.currentTime = 0; } catch (_error) {}
+    document.removeEventListener('keydown', handleVideoModalKeydown);
     modal.style.display = 'none';
 }
 </script>

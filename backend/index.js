@@ -336,12 +336,35 @@ app.post('/api/upload', upload.single('video'), async (req, res) => {
     });
     console.log('n8n responded:', n8nResponse.status);
 
+    // Keep a durable playback copy for the Library. The local upload path is
+    // retained as a fallback for non-MP4 files or when Storage is unavailable.
+    let libraryFilePath = `/server/uploads/${req.file.filename}`;
+    if (path.extname(req.file.filename).toLowerCase() === '.mp4') {
+      try {
+        const userId = String(req.session?.user?.id || 'unassigned').replace(/[^A-Za-z0-9_-]/g, '_');
+        const storagePath = `${userId}/uploads/${Date.now()}-${crypto.randomBytes(8).toString('hex')}.mp4`;
+        const videoBuffer = await fs.promises.readFile(req.file.path);
+        await ensureGeneratedVideoBucket();
+        const { error: storageError } = await supabase.storage
+          .from(GENERATED_VIDEO_BUCKET)
+          .upload(storagePath, videoBuffer, {
+            contentType: 'video/mp4',
+            cacheControl: '3600',
+            upsert: false
+          });
+        if (storageError) throw storageError;
+        libraryFilePath = storageReference(GENERATED_VIDEO_BUCKET, storagePath);
+      } catch (storageError) {
+        console.warn('Could not save upload to durable video storage; keeping its temporary server copy:', storageError.message);
+      }
+    }
+
     res.json({
       success: true,
       message: 'File uploaded and sent to automation successfully',
       file: {
         filename: req.file.filename,
-        path: `/server/uploads/${req.file.filename}`,
+        path: libraryFilePath,
         size: req.file.size
       }
     });
@@ -782,21 +805,62 @@ async function libraryItemForClient(item) {
   };
   const storageRef = parseStorageReference(result.filePath);
   result.storageBacked = !!storageRef;
-  if (!storageRef) return result;
-
-  try {
-    const { data, error } = await supabase.storage
-      .from(storageRef.bucket)
-      .createSignedUrl(storageRef.filePath, 60 * 60);
-    if (error) throw error;
-    result.filePath = data.signedUrl;
-  } catch (error) {
-    console.error('Could not create Library video link:', error.message);
-    result.filePath = '';
-    result.storageUnavailable = true;
+  const isLegacyUpload = /^\/server\/uploads\/[^/]+$/.test(result.filePath);
+  if (storageRef || isLegacyUpload) {
+    // Use a stable same-origin endpoint. It refreshes private Storage links on
+    // demand and can still serve older uploads that remain on the backend disk.
+    result.filePath = `/api/library/${encodeURIComponent(result.id)}/media`;
   }
   return result;
 }
+
+app.get('/api/library/:id/media', async (req, res) => {
+  const userId = req.session && req.session.user ? req.session.user.id : null;
+  if (!userId) return res.status(401).json({ success: false, message: 'Sign in to play this video.' });
+
+  try {
+    const { data: item, error } = await supabase
+      .from('library_items')
+      .select('id, user_id, file_path')
+      .eq('id', req.params.id)
+      .eq('user_id', userId)
+      .single();
+    if (error || !item) return res.status(404).json({ success: false, message: 'This Library video was not found.' });
+
+    const storageRef = parseStorageReference(item.file_path);
+    if (storageRef) {
+      const { data, error: linkError } = await supabase.storage
+        .from(storageRef.bucket)
+        .createSignedUrl(storageRef.filePath, 5 * 60);
+      if (linkError || !data?.signedUrl) {
+        console.error('Could not create a playback link for Library video:', linkError?.message || 'No signed URL returned');
+        return res.status(503).json({ success: false, message: 'Playback is temporarily unavailable. Refresh the Library and try again.' });
+      }
+      res.set('Cache-Control', 'private, no-store');
+      return res.redirect(302, data.signedUrl);
+    }
+
+    const legacyUpload = /^\/server\/uploads\/([^/]+)$/.exec(item.file_path || '');
+    if (!legacyUpload || path.basename(legacyUpload[1]) !== legacyUpload[1]) {
+      return res.status(404).json({ success: false, message: 'This Library video has no playable media file.' });
+    }
+    const localPath = path.resolve(uploadDir, legacyUpload[1]);
+    if (path.dirname(localPath) !== path.resolve(uploadDir)) {
+      return res.status(404).json({ success: false, message: 'This Library video has no playable media file.' });
+    }
+    try {
+      await fs.promises.access(localPath, fs.constants.R_OK);
+    } catch (_error) {
+      return res.status(410).json({ success: false, message: 'This older upload is no longer on the server. Upload the original video again to restore playback.' });
+    }
+
+    res.set('Cache-Control', 'private, no-store');
+    return res.sendFile(localPath);
+  } catch (error) {
+    console.error('Could not stream Library video:', error.message);
+    return res.status(500).json({ success: false, message: 'Could not play this Library video.' });
+  }
+});
 
 app.get('/api/library', async (req, res) => {
   const userId = req.session && req.session.user ? req.session.user.id : null;
