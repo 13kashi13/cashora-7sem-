@@ -36,6 +36,7 @@ window.CASHORA_CONFIG = {
   library: {
     list: `${API_BASE_URL}/api/library`,
     create: `${API_BASE_URL}/api/library`,
+    archiveVideo: `${API_BASE_URL}/api/library/archive-video`,
     update: (id) => `${API_BASE_URL}/api/library/${id}`,
     delete: (id) => `${API_BASE_URL}/api/library/${id}`
   },
@@ -52,6 +53,7 @@ window.CASHORA_CONFIG = {
     enhancePrompt: `${API_BASE_URL}/api/video/enhance-prompt`,
     generate: `${API_BASE_URL}/api/video/generate`,
     status: (id) => `${API_BASE_URL}/api/video/status/${id}`,
+    saveGenerated: `${API_BASE_URL}/api/video/save-generated`,
     saveToDrive: `${API_BASE_URL}/api/video/save-to-drive`,
     driveStatus: `${API_BASE_URL}/api/video/drive-status`
   },

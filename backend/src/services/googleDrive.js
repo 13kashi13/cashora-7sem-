@@ -107,15 +107,6 @@ class GoogleDriveService {
         fields: 'id, name, webViewLink, webContentLink'
       });
 
-      // Make the file publicly accessible
-      await this.drive.permissions.create({
-        fileId: file.data.id,
-        requestBody: {
-          role: 'reader',
-          type: 'anyone'
-        }
-      });
-
       console.log(`✅ Video uploaded to Drive: ${file.data.id}`);
 
       return {

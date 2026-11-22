@@ -72,8 +72,10 @@ Server will start on `http://localhost:4000`
 
 - `GET /api/library` - Get library items
 - `POST /api/library` - Add item to library
+- `POST /api/library/archive-video` - Copy an older URL-backed video into private Storage
 - `PUT /api/library/:id` - Update library item
 - `DELETE /api/library/:id` - Delete library item
+- `POST /api/video/save-generated` - Persist a completed Blotato video before adding it to the Library
 
 ### Automation Settings
 
@@ -200,6 +202,8 @@ Files are stored in `./uploads/` directory. For production:
 1. Consider using Supabase Storage
 2. Or integrate with S3/Cloudinary
 3. Update `multer` configuration accordingly
+
+AI-generated videos are copied from Blotato into a private Supabase Storage bucket named by `SUPABASE_VIDEO_BUCKET` (default: `generated-videos`). The backend creates the bucket on first use with the service-role key and stores the object path in `library_items.file_path`. Library responses create fresh signed playback links, so a page refresh does not depend on the browser's temporary Blotato URL. `LIBRARY_VIDEO_MAX_BYTES` controls the maximum accepted video size (default: 50 MiB).
 
 ## Background Scheduler
 

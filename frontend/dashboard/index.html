@@ -2821,7 +2821,7 @@ async function startGenerate() {
                 // Video complete!
                 if (statusData.status === 'done' && statusData.mediaUrl) {
                     console.log('✅ Video complete:', statusData.mediaUrl);
-                    finishVideoGeneration(statusData.mediaUrl, platforms);
+                    finishVideoGeneration(statusData.mediaUrl, platforms, statusData.videoId || videoId);
                     return;
                 }
 
@@ -2878,7 +2878,7 @@ async function startGenerate() {
     }
 
     // Finish video generation and show result
-    function finishVideoGeneration(videoUrl, platforms) {
+    function finishVideoGeneration(videoUrl, platforms, videoId) {
         // Show final step
         updateProgress(4, promptSteps, 'Video complete!');
 
@@ -2903,73 +2903,19 @@ async function startGenerate() {
 
             // Store video URL globally for library/schedule actions
             window._lastGeneratedVideoUrl = videoUrl;
-
-            // AUTO-SAVE TO GOOGLE DRIVE
-            console.log('💾 Saving video to Google Drive...');
-            
+            window._lastGeneratedVideoId = videoId;
+            window._lastGeneratedVideoPlatforms = platforms || ['YouTube', 'Instagram', 'TikTok'];
             const videoTitle = `AI Generated Video - ${new Date().toLocaleDateString()}`;
-            const userPrompt = document.getElementById('videoPrompt')?.value || 'AI video';
-            
-            try {
-                const driveResponse = await fetch(CASHORA_CONFIG.video.saveToDrive, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify({
-                        videoUrl: videoUrl,
-                        title: videoTitle,
-                        prompt: userPrompt
-                    })
-                });
+            window._lastGeneratedVideoTitle = videoTitle;
+            const userPrompt = document.getElementById('promptInput')?.value || 'AI video';
 
-                const driveData = await driveResponse.json();
-                
-                if (driveData.success) {
-                    console.log('✅ Video saved to Google Drive:', driveData.driveUrl);
-                    
-                    // Save to library with Drive URL
-                    await addLibraryItem({
-                        title: videoTitle,
-                        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-                        status: 'ready',
-                        platforms: platforms || ['YouTube', 'Instagram', 'TikTok'],
-                        type: 'ai-generated',
-                        filePath: driveData.directUrl || videoUrl,
-                        driveFileId: driveData.driveFileId,
-                        driveUrl: driveData.driveUrl,
-                        originalUrl: videoUrl
-                    });
-                    
-                    alert('✅ Video saved to Google Drive and Library!');
-                } else {
-                    console.warn('⚠️ Drive save failed, using fallback:', driveData.error);
-                    
-                    // Fallback: save with original URL
-                    await addLibraryItem({
-                        title: videoTitle,
-                        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-                        status: 'ready',
-                        platforms: platforms || ['YouTube', 'Instagram', 'TikTok'],
-                        type: 'ai-generated',
-                        filePath: driveData.fallbackUrl || videoUrl
-                    });
-                    
-                    alert('✅ Video saved to Library (Drive unavailable)');
-                }
+            console.log('💾 Saving generated video and Library record...');
+            try {
+                await saveGeneratedVideoToLibrary(videoId, videoTitle, userPrompt, window._lastGeneratedVideoPlatforms);
+                alert('✅ Video saved to your Library and persistent storage.');
             } catch (err) {
-                console.error('❌ Failed to save:', err);
-                
-                // Last resort: localStorage only
-                await addLibraryItem({
-                    title: videoTitle,
-                    date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-                    status: 'ready',
-                    platforms: platforms || ['YouTube', 'Instagram', 'TikTok'],
-                    type: 'ai-generated',
-                    filePath: videoUrl
-                });
-                
-                alert('⚠️ Video saved to local storage only. Set up Google Drive for permanent storage.');
+                console.error('❌ Failed to persist generated video:', err);
+                alert('⚠️ The video was created, but could not be saved to your Library. Keep this page open and use “Save to Library” to retry. ' + err.message);
             }
 
             console.log('🎉 Video generation complete!', videoUrl);
@@ -2977,40 +2923,27 @@ async function startGenerate() {
     }
 
     // Manual save to library (backup button)
-    function manualSaveToLibrary() {
-        const videoUrl = window._lastGeneratedVideoUrl;
-        if (!videoUrl) {
-            alert('❌ No video URL found. Please try generating again.');
+    async function manualSaveToLibrary() {
+        const videoId = window._lastGeneratedVideoId;
+        if (!videoId) {
+            alert('❌ This video has no saved generation ID. Please generate it again to retry Library saving.');
             return;
         }
-        
-        console.log('🔵 MANUAL SAVE: Saving to library...');
-        const videoTitle = `AI Generated Video - ${new Date().toLocaleDateString()}`;
-        
-        addLibraryItem({
-            title: videoTitle,
-            date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-            status: 'ready',
-            platforms: ['YouTube', 'Instagram', 'TikTok'],
-            type: 'ai-generated',
-            filePath: videoUrl
-        }).then(() => {
-            console.log('✅ Manual save successful');
-            
-            // Automatically switch to library page
+        try {
+            await saveGeneratedVideoToLibrary(
+                videoId,
+                window._lastGeneratedVideoTitle || `AI Generated Video - ${new Date().toLocaleDateString()}`,
+                document.getElementById('promptInput')?.value || 'AI video',
+                window._lastGeneratedVideoPlatforms || ['YouTube', 'Instagram', 'TikTok']
+            );
             showPage('library');
-            
-            // Force re-render after a moment
-            setTimeout(() => {
-                fetchLibraryItems().then(() => {
-                    renderLibrary();
-                    alert('✅ Video saved to library! You are now viewing the Library page.');
-                });
-            }, 500);
-        }).catch(err => {
-            alert('❌ Failed to save: ' + err.message);
+            await fetchLibraryItems();
+            renderLibrary();
+            alert('✅ Video saved to your Library and persistent storage.');
+        } catch (err) {
             console.error('❌ Manual save failed:', err);
-        });
+            alert('❌ Could not save the video: ' + err.message);
+        }
     }
 
     function runStep(i, stepsList) {
@@ -3060,9 +2993,10 @@ async function startGenerate() {
 
         // Save to Content Library
         const platformsToSave = capturedPlatforms.length ? capturedPlatforms : ['YouTube', 'Instagram'];
+        let librarySavePromise;
         if (isUploadMode) {
             const title = capturedCaption || (file ? file.name.replace(/\.[^/.]+$/, "") : 'Uploaded Video');
-            addLibraryItem({
+            librarySavePromise = addLibraryItem({
                 title: title,
                 status: 'published',
                 platforms: platformsToSave,
@@ -3071,7 +3005,7 @@ async function startGenerate() {
             });
         } else {
             const title = capturedPrompt.length > 55 ? capturedPrompt.substring(0, 55) + '...' : (capturedPrompt || 'AI Generated Video');
-            addLibraryItem({
+            librarySavePromise = addLibraryItem({
                 title: title,
                 status: 'draft',
                 platforms: platformsToSave,
@@ -3084,13 +3018,22 @@ async function startGenerate() {
             const h3 = doneCard.querySelector('h3');
             const p = doneCard.querySelector('p');
             if (isUploadMode) {
-                if (h3) h3.textContent = 'Posting Pipeline Started!';
-                if (p) p.textContent = 'Your video has been uploaded, published, and saved to your Content Library.';
+                if (h3) h3.textContent = 'Posting Pipeline Complete';
+                if (p) p.textContent = 'Your video is ready. Saving it to your Content Library...';
             } else {
-                if (h3) h3.textContent = 'Saved to Drafts';
-                if (p) p.textContent = 'Your AI video has been generated and saved to your Content Library as a draft.';
+                if (h3) h3.textContent = 'Video Ready';
+                if (p) p.textContent = 'Your AI video is ready. Saving it to your Content Library...';
             }
             doneCard.classList.add('visible');
+
+            librarySavePromise.then(() => {
+                if (p) p.textContent = isUploadMode
+                    ? 'Your video was saved to your Content Library.'
+                    : 'Your AI video was saved to your Content Library as a draft.';
+            }).catch(err => {
+                console.error('Could not save completed content to the Library:', err);
+                if (p) p.textContent = 'Your video is ready, but it could not be saved to the Library. Please try again.';
+            });
         }
     }
 }
@@ -3159,15 +3102,152 @@ function getLibraryItems() {
     return [];
 }
 
+function normalizeLibraryItem(item) {
+    return {
+        ...item,
+        filePath: Object.prototype.hasOwnProperty.call(item, 'filePath') ? item.filePath : (item.file_path || ''),
+        createdAt: item.createdAt || item.created_at || null,
+        updatedAt: item.updatedAt || item.updated_at || null
+    };
+}
+
+function cachePersistedLibraryItem(item) {
+    const savedItem = normalizeLibraryItem(item);
+    _cachedLibraryItems = [savedItem, ...(_cachedLibraryItems || []).filter(existing => existing.id !== savedItem.id)];
+    try { localStorage.setItem(DEFAULT_STORAGE_KEY, JSON.stringify(_cachedLibraryItems)); } catch(e) {}
+    renderLibrary();
+    if (typeof loadDashboardOverview === 'function') loadDashboardOverview();
+    return savedItem;
+}
+
+async function saveGeneratedVideoToLibrary(videoId, title, prompt, platforms) {
+    const priorItems = getLibraryItems();
+    const priorBackup = priorItems.find(item => /^(local_|vid_)/.test(String(item.id || '')) && String(item.videoId || '') === String(videoId || ''));
+    const localBackup = {
+        id: priorBackup?.id || `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        title: title || 'AI Generated Video',
+        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        status: 'save_failed',
+        platforms: platforms || ['YouTube', 'Instagram', 'TikTok'],
+        type: 'ai-generated',
+        filePath: window._lastGeneratedVideoUrl || priorBackup?.filePath || '',
+        caption: prompt || '',
+        videoId: String(videoId || '')
+    };
+    try {
+        _cachedLibraryItems = [localBackup, ...priorItems.filter(item => item.id !== localBackup.id && String(item.videoId || '') !== String(videoId || ''))];
+        localStorage.setItem(DEFAULT_STORAGE_KEY, JSON.stringify(_cachedLibraryItems));
+    } catch(e) {}
+
+    let response;
+    let data;
+    try {
+        response = await fetch(window.CASHORA_CONFIG.video.saveGenerated, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ videoId, title, prompt, platforms })
+        });
+        data = await response.json().catch(() => ({}));
+    } catch (error) {
+        cachePersistedLibraryItem(localBackup);
+        throw error;
+    }
+
+    if (data.item) {
+        _cachedLibraryItems = (_cachedLibraryItems || []).filter(item => item.id !== localBackup.id && String(item.videoId || '') !== String(videoId || ''));
+        try { localStorage.setItem(DEFAULT_STORAGE_KEY, JSON.stringify(_cachedLibraryItems)); } catch(e) {}
+        cachePersistedLibraryItem(data.item);
+    }
+    if (!response.ok || !data.success || !data.item) {
+        if (!data.item) cachePersistedLibraryItem(localBackup);
+        throw new Error(data.message || 'The server did not confirm that the Library save completed.');
+    }
+    return normalizeLibraryItem(data.item);
+}
+
+async function retryLocalGeneratedVideo(itemId) {
+    const item = getLibraryItems().find(entry => String(entry.id) === String(itemId));
+    if (!item || !item.videoId) return alert('This browser copy has no video generation ID. Use “Save permanently” to recover it from its video link.');
+    try {
+        await saveGeneratedVideoToLibrary(item.videoId, item.title, item.caption, item.platforms);
+        alert('✅ Video saved to permanent storage.');
+    } catch (error) {
+        alert('❌ Retry failed: ' + error.message);
+    }
+}
+
+async function retryLibraryVideoSave(libraryItemId) {
+    const response = await fetch(window.CASHORA_CONFIG.video.saveGenerated, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ libraryItemId })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (data.item) cachePersistedLibraryItem(data.item);
+    if (!response.ok || !data.success || !data.item) {
+        throw new Error(data.message || `Retry failed (${response.status})`);
+    }
+    return normalizeLibraryItem(data.item);
+}
+
+async function archiveLibraryVideo(itemId) {
+    const item = getLibraryItems().find(entry => String(entry.id) === String(itemId));
+    if (!item) return alert('Could not find this Library video. Refresh the page and try again.');
+    const isBrowserOnly = /^(local_|vid_)/.test(String(item.id || ''));
+    const requestBody = isBrowserOnly
+        ? { localItem: {
+            id: item.id,
+            title: item.title,
+            date: item.date,
+            status: item.status,
+            platforms: item.platforms,
+            type: item.type,
+            filePath: item.filePath || item.file_path || '',
+            caption: item.caption || ''
+        } }
+        : { libraryItemId: item.id };
+
+    try {
+        const response = await fetch(window.CASHORA_CONFIG.library.archiveVideo, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(requestBody)
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.success || !data.item) {
+            throw new Error(data.message || `Permanent save failed (${response.status})`);
+        }
+
+        _cachedLibraryItems = (_cachedLibraryItems || []).filter(entry => String(entry.id) !== String(item.id));
+        try { localStorage.setItem(DEFAULT_STORAGE_KEY, JSON.stringify(_cachedLibraryItems)); } catch(e) {}
+        cachePersistedLibraryItem(data.item);
+        alert('✅ Video saved to permanent storage.');
+    } catch (error) {
+        alert('❌ Could not save this older video permanently. ' + error.message);
+    }
+}
+
 async function fetchLibraryItems() {
+    const browserOnlyItems = getLibraryItems()
+        .filter(item => /^(local_|vid_)/.test(String(item.id || '')))
+        .map(normalizeLibraryItem);
     try {
         const res = await fetch(window.CASHORA_CONFIG.library.list);
         const data = await res.json();
-        if (data.success && Array.isArray(data.items)) {
-            _cachedLibraryItems = data.items;
-            try { localStorage.setItem(DEFAULT_STORAGE_KEY, JSON.stringify(data.items)); } catch(e){}
-            return data.items;
+        if (!res.ok || !data.success || !Array.isArray(data.items)) {
+            throw new Error(data.message || `Library request failed (${res.status})`);
         }
+        const serverItems = data.items.map(normalizeLibraryItem);
+        const serverIds = new Set(serverItems.map(item => String(item.id)));
+        _cachedLibraryItems = [
+            ...serverItems,
+            ...browserOnlyItems.filter(item => !serverIds.has(String(item.id)))
+        ];
+        try { localStorage.setItem(DEFAULT_STORAGE_KEY, JSON.stringify(_cachedLibraryItems)); } catch(e){}
+        return _cachedLibraryItems;
     } catch(e) {
         console.warn('Error fetching library from server:', e);
     }
@@ -3178,81 +3258,35 @@ async function addLibraryItem(item) {
     console.log('📝 addLibraryItem called with:', item);
     
     const newItem = {
-        id: 'vid_' + Date.now(),
         title: item.title || 'Untitled Video',
         date: item.date || new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
         status: item.status || 'draft',
         platforms: item.platforms || ['YouTube', 'Instagram'],
         type: item.type || 'upload',
         filePath: item.filePath || '',
+        caption: item.caption || '',
         createdAt: new Date().toISOString()
     };
     
-    console.log('📝 Prepared item for save:', newItem);
-    
-    // IMPORTANT: Add to cached array FIRST before any API calls
-    _cachedLibraryItems.unshift(newItem);
-    console.log('✅ Added to _cachedLibraryItems. Total:', _cachedLibraryItems.length);
-    
-    // Save to localStorage immediately
-    try { 
-        localStorage.setItem(DEFAULT_STORAGE_KEY, JSON.stringify(_cachedLibraryItems)); 
-        console.log('✅ Saved to localStorage');
-    } catch(e){
-        console.error('❌ Error saving to localStorage:', e);
-    }
-    
-    // Render immediately with cached data
-    console.log('📝 Rendering library with cached data...');
-    renderLibrary();
-    
-    // Now try to save to server (non-blocking)
+    console.log('📝 Saving Library item to the server:', newItem.title);
     try {
-        console.log('📝 Sending to server:', window.CASHORA_CONFIG.library.create);
-        
         const res = await fetch(window.CASHORA_CONFIG.library.create, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
             body: JSON.stringify(newItem)
         });
-        
-        console.log('📝 Server response status:', res.status);
-        
-        const data = await res.json();
-        console.log('📝 Server response data:', data);
-        
-        if (data.success && data.item) {
-            console.log('✅ Server saved successfully');
-            // Update the item with server ID if different
-            const index = _cachedLibraryItems.findIndex(it => it.id === newItem.id);
-            if (index !== -1 && data.item.id !== newItem.id) {
-                _cachedLibraryItems[index] = data.item;
-                localStorage.setItem(DEFAULT_STORAGE_KEY, JSON.stringify(_cachedLibraryItems));
-                console.log('✅ Updated with server ID');
-            }
-        } else {
-            console.warn('⚠️ Server save failed, but local save succeeded');
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success || !data.item) {
+            throw new Error(data.message || `Library save failed (${res.status})`);
         }
+        const savedItem = cachePersistedLibraryItem(data.item);
+        console.log('✅ Library item confirmed in database:', savedItem.id);
+        return savedItem;
     } catch(e) {
         console.error('❌ Error saving to server:', e);
-        console.log('✅ Local save succeeded, server save failed (that\'s okay)');
+        throw e;
     }
-    
-    // Force refresh library display
-    if (window.location.hash === '#library' || document.querySelector('.page-container.active')?.id === 'libraryPage') {
-        console.log('🔄 Library page is active, forcing immediate refresh');
-        setTimeout(() => {
-            renderLibrary();
-        }, 100);
-    }
-    
-    if (typeof loadDashboardOverview === 'function') {
-        console.log('📝 Loading dashboard overview...');
-        loadDashboardOverview();
-    }
-    
-    console.log('✅ addLibraryItem complete - Total items:', _cachedLibraryItems.length);
 }
 
 async function deleteLibraryItem(id) {
@@ -3361,10 +3395,8 @@ async function renderLibrary() {
         return;
     }
 
-    // Use cached items first, only fetch from server if cache is empty
-    let items = _cachedLibraryItems && _cachedLibraryItems.length > 0 
-        ? _cachedLibraryItems 
-        : await fetchLibraryItems();
+    // Fetch the durable list on every render so private Storage links are fresh.
+    let items = await fetchLibraryItems();
         
     console.log(`📚 Rendering ${items.length} items:`, items);
 
@@ -3400,7 +3432,24 @@ async function renderLibrary() {
 
     grid.innerHTML = items.map((item, idx) => {
         const isDraft = item.status === 'draft';
-        const badge = isDraft 
+        const isSaving = item.status === 'saving';
+        const isSaveFailed = item.status === 'save_failed';
+        const isStorageUnavailable = item.storageUnavailable === true;
+        const isBrowserOnly = /^(local_|vid_)/.test(String(item.id || ''));
+        const canRetryLocalGenerated = isBrowserOnly && !!item.videoId;
+        const canArchiveVideo = !!item.filePath && item.storageBacked !== true && !isSaving && !canRetryLocalGenerated;
+        const savingSince = Date.parse(item.updatedAt || item.createdAt || '');
+        const isStaleSaving = isSaving && Number.isFinite(savingSince) && Date.now() - savingSince > 5 * 60 * 1000;
+        const canRetrySave = isSaveFailed || isStaleSaving;
+        const badge = isBrowserOnly
+            ? `<span class="badge" style="background:#4b3513;color:#ffd899;">Browser copy</span>`
+            : isStorageUnavailable
+            ? `<span class="badge" style="background:#5a1f1f;color:#ffb1b1;">Playback unavailable</span>`
+            : canRetrySave
+            ? `<span class="badge" style="background:#5a1f1f;color:#ffb1b1;">Save needs retry</span>`
+            : isSaving
+                ? `<span class="badge muted">Saving…</span>`
+                : isDraft
             ? `<span class="badge muted">Draft</span>` 
             : `<span class="badge green">Published</span>`;
         const grad = THUMB_GRADIENTS[idx % THUMB_GRADIENTS.length];
@@ -3435,7 +3484,21 @@ async function renderLibrary() {
                         </div>
                     </div>
                     <div class="video-actions">
-                        ${isDraft ? `
+                        ${canRetryLocalGenerated ? `
+                            <button class="v-btn publish" onclick="retryLocalGeneratedVideo('${item.id}')">
+                                Retry Save
+                            </button>
+                        ` : canArchiveVideo ? `
+                            <button class="v-btn publish" onclick="archiveLibraryVideo('${item.id}')">
+                                Save permanently
+                            </button>
+                        ` : canRetrySave ? `
+                            <button class="v-btn publish" onclick="retryLibraryVideoSave('${item.id}').then(() => alert('✅ Video saved to persistent storage.')).catch(err => alert('❌ Retry failed: ' + err.message))">
+                                Retry Save
+                            </button>
+                        ` : isSaving ? `
+                            <span class="badge muted">Saving video…</span>
+                        ` : isDraft ? `
                             <button class="v-btn publish" onclick="publishDraftItem('${item.id}')">
                                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
                                 Post / Publish
@@ -4734,15 +4797,16 @@ window.addEventListener('DOMContentLoaded', function() {
 </script>
 <script src="charts.js"></script>
 <!-- Video Modal for Fullscreen View -->
-<div id="videoModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.95);z-index:10000;align-items:center;justify-content:center;">
-    <div style="position:relative;width:90%;max-width:1200px;max-height:90vh;">
-        <button onclick="closeVideoModal()" style="position:absolute;top:-40px;right:0;background:rgba(255,255,255,0.1);border:none;color:white;width:36px;height:36px;border-radius:50%;cursor:pointer;font-size:24px;display:flex;align-items:center;justify-content:center;transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">
+<div id="videoModal" style="display:none;position:fixed;inset:0;padding:56px 16px 24px;box-sizing:border-box;overflow:auto;background:rgba(0,0,0,0.96);z-index:10000;align-items:center;justify-content:center;">
+    <div style="position:relative;width:min(96vw,1400px);max-height:calc(100vh - 80px);display:flex;flex-direction:column;align-items:center;justify-content:center;">
+        <button onclick="closeVideoModal()" style="position:fixed;top:16px;right:20px;background:rgba(255,255,255,0.1);border:none;color:white;width:40px;height:40px;border-radius:50%;cursor:pointer;font-size:24px;display:flex;align-items:center;justify-content:center;transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">
             ×
         </button>
-        <video id="modalVideo" controls autoplay style="width:100%;max-height:90vh;border-radius:12px;background:#000;">
+        <video id="modalVideo" controls autoplay playsinline preload="metadata" style="display:block;width:96vw;height:82vh;max-width:1400px;object-fit:contain;border-radius:12px;background:#000;">
             <source id="modalVideoSource" src="" type="video/mp4">
             Your browser does not support the video tag.
         </video>
+        <div id="modalVideoError" style="display:none;color:#ffb1b1;background:#341c1c;border:1px solid #633737;border-radius:8px;padding:12px 16px;margin-top:12px;text-align:center;max-width:700px;"></div>
         <div id="modalVideoTitle" style="margin-top:16px;color:white;font-size:18px;font-weight:600;text-align:center;"></div>
     </div>
 </div>
@@ -4753,12 +4817,26 @@ function openVideoModal(videoUrl, videoTitle) {
     const video = document.getElementById('modalVideo');
     const source = document.getElementById('modalVideoSource');
     const title = document.getElementById('modalVideoTitle');
+    const errorMessage = document.getElementById('modalVideoError');
     
-    source.src = videoUrl;
+    errorMessage.style.display = 'none';
+    errorMessage.textContent = '';
+    video.onerror = function() {
+        errorMessage.textContent = 'This video could not be loaded. Refresh the Library to get a fresh playback link. Older browser-only links may have expired.';
+        errorMessage.style.display = 'block';
+    };
+    video.onloadedmetadata = function() {
+        errorMessage.style.display = 'none';
+    };
+    source.src = videoUrl || '';
     title.textContent = videoTitle || 'Video Preview';
     video.load();
     
     modal.style.display = 'flex';
+    if (!videoUrl) {
+        errorMessage.textContent = 'There is no playable video link for this Library item. If it is an older browser copy, use “Save permanently” to recover it while its link still works.';
+        errorMessage.style.display = 'block';
+    }
     
     // Pause video when clicking outside
     modal.onclick = function(e) {

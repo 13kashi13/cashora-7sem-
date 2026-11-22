@@ -3,6 +3,9 @@ const express = require('express');
 const cookieSession = require('cookie-session');
 const path = require('path');
 const crypto = require('crypto');
+const dns = require('dns').promises;
+const https = require('https');
+const net = require('net');
 const fs = require('fs'); // still needed for file uploads & multer
 
 const supabase = require('./src/db');
@@ -641,6 +644,160 @@ app.delete('/api/scheduled-posts/:id', async (req, res) => {
 });
 
 // ─── Content Library API (Supabase-backed) ──────────────────
+const GENERATED_VIDEO_BUCKET = process.env.SUPABASE_VIDEO_BUCKET || 'generated-videos';
+const GENERATED_VIDEO_MAX_BYTES = Number(process.env.LIBRARY_VIDEO_MAX_BYTES) || (50 * 1024 * 1024);
+let generatedVideoBucketPromise = null;
+
+async function ensureGeneratedVideoBucket() {
+  if (!process.env.SUPABASE_SERVICE_KEY) {
+    throw new Error('Supabase Storage needs SUPABASE_SERVICE_KEY on the backend.');
+  }
+  if (generatedVideoBucketPromise) return generatedVideoBucketPromise;
+
+  generatedVideoBucketPromise = (async () => {
+    const { data: currentBucket } = await supabase.storage.getBucket(GENERATED_VIDEO_BUCKET);
+    if (currentBucket) {
+      if (currentBucket.public) throw new Error(`Supabase Storage bucket "${GENERATED_VIDEO_BUCKET}" must be private.`);
+      return;
+    }
+
+    const { error: createError } = await supabase.storage.createBucket(GENERATED_VIDEO_BUCKET, {
+      public: false,
+      fileSizeLimit: GENERATED_VIDEO_MAX_BYTES,
+      allowedMimeTypes: ['video/mp4']
+    });
+    if (createError) {
+      const { data: bucketAfterCreate } = await supabase.storage.getBucket(GENERATED_VIDEO_BUCKET);
+      if (!bucketAfterCreate) throw createError;
+    }
+  })();
+
+  try {
+    await generatedVideoBucketPromise;
+  } catch (error) {
+    generatedVideoBucketPromise = null;
+    throw error;
+  }
+}
+
+function isPrivateIpAddress(address) {
+  const family = net.isIP(address);
+  if (family === 4) {
+    const [a, b, c] = address.split('.').map(Number);
+    return a === 0 || a === 10 || a === 127 || a >= 224 ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && (b === 0 || b === 168 || (b === 88 && c === 99))) ||
+      (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100))) ||
+      (a === 203 && b === 0 && c === 113);
+  }
+  if (family === 6) {
+    const normalized = address.toLowerCase();
+    if (normalized.startsWith('::ffff:')) return isPrivateIpAddress(normalized.slice(7));
+    return normalized === '::' || normalized === '::1' || normalized.startsWith('fc') ||
+      normalized.startsWith('fd') || /^fe[89ab]/.test(normalized) ||
+      normalized.startsWith('ff') || normalized.startsWith('2001:db8:');
+  }
+  return true;
+}
+
+async function assertPublicHttpsUrl(value) {
+  const url = new URL(value);
+  if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443')) {
+    throw new Error('Video links must use a public HTTPS address.');
+  }
+  const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (net.isIP(hostname) || hostname === 'localhost' || /\.(local|internal|localhost|test|invalid)$/.test(hostname)) {
+    throw new Error('The video link points to a non-public address.');
+  }
+  const addresses = await dns.lookup(hostname, { all: true, verbatim: true });
+  if (!addresses.length || addresses.some(entry => isPrivateIpAddress(entry.address))) {
+    throw new Error('The video link does not resolve to a public address.');
+  }
+  return { url, hostname, address: addresses[0] };
+}
+
+async function downloadPublicVideo(value) {
+  let currentUrl = value;
+  const redirects = new Set([301, 302, 303, 307, 308]);
+  for (let attempt = 0; attempt <= 4; attempt++) {
+    const { url, hostname, address } = await assertPublicHttpsUrl(currentUrl);
+    const agent = new https.Agent({
+      lookup: (requestedHost, options, callback) => {
+        if (requestedHost.toLowerCase() !== hostname) {
+          return callback(new Error('The video link attempted to change its destination host.'));
+        }
+        if (options && options.all) return callback(null, [address]);
+        callback(null, address.address, address.family);
+      }
+    });
+    let response;
+    try {
+      response = await axios.get(url.toString(), {
+        responseType: 'arraybuffer',
+        timeout: 120000,
+        maxContentLength: GENERATED_VIDEO_MAX_BYTES,
+        maxBodyLength: GENERATED_VIDEO_MAX_BYTES,
+        maxRedirects: 0,
+        httpsAgent: agent,
+        validateStatus: status => (status >= 200 && status < 300) || redirects.has(status)
+      });
+    } finally {
+      agent.destroy();
+    }
+    if (redirects.has(response.status)) {
+      if (!response.headers.location || attempt === 4) throw new Error('The video link redirected too many times.');
+      currentUrl = new URL(response.headers.location, url).toString();
+      continue;
+    }
+    const buffer = Buffer.from(response.data);
+    if (!buffer.length) throw new Error('The video link returned an empty file.');
+    if (buffer.length > GENERATED_VIDEO_MAX_BYTES) {
+      throw new Error(`The video exceeds the configured ${Math.round(GENERATED_VIDEO_MAX_BYTES / (1024 * 1024))} MB storage limit.`);
+    }
+    const contentType = String(response.headers['content-type'] || '').toLowerCase();
+    if (contentType && !contentType.startsWith('video/mp4') && contentType !== 'application/octet-stream') {
+      throw new Error('The link did not return an MP4 video.');
+    }
+    return buffer;
+  }
+  throw new Error('Could not download the video.');
+}
+
+function storageReference(bucket, filePath) {
+  return `storage://${bucket}/${filePath}`;
+}
+
+function parseStorageReference(reference) {
+  const match = /^storage:\/\/([A-Za-z0-9_-]+)\/(.+)$/.exec(reference || '');
+  return match ? { bucket: match[1], filePath: match[2] } : null;
+}
+
+async function libraryItemForClient(item) {
+  const result = {
+    ...item,
+    filePath: item.filePath || item.file_path || '',
+    createdAt: item.createdAt || item.created_at || null
+  };
+  const storageRef = parseStorageReference(result.filePath);
+  result.storageBacked = !!storageRef;
+  if (!storageRef) return result;
+
+  try {
+    const { data, error } = await supabase.storage
+      .from(storageRef.bucket)
+      .createSignedUrl(storageRef.filePath, 60 * 60);
+    if (error) throw error;
+    result.filePath = data.signedUrl;
+  } catch (error) {
+    console.error('Could not create Library video link:', error.message);
+    result.filePath = '';
+    result.storageUnavailable = true;
+  }
+  return result;
+}
+
 app.get('/api/library', async (req, res) => {
   const userId = req.session && req.session.user ? req.session.user.id : null;
   console.log('📚 Library fetch - User ID:', userId, 'Session:', !!req.session);
@@ -654,12 +811,13 @@ app.get('/api/library', async (req, res) => {
     const { data, error } = await query;
     if (error) {
       console.error('Error fetching library items:', error.message);
-      return res.json({ success: true, items: [] });
+      return res.status(500).json({ success: false, message: 'Could not load the Library from the database.' });
     }
-    res.json({ success: true, items: data || [] });
+    const items = await Promise.all((data || []).map(libraryItemForClient));
+    res.json({ success: true, items });
   } catch (err) {
     console.error('Exception fetching library items:', err.message);
-    res.json({ success: true, items: [] });
+    res.status(500).json({ success: false, message: 'Could not load the Library from the database.' });
   }
 });
 
@@ -686,25 +844,103 @@ app.post('/api/library', async (req, res) => {
       .single();
     if (error) {
       console.error('❌ Supabase error inserting library item:', error.message);
-      // Return success with the original item so frontend can save locally
-      return res.json({ 
-        success: true, 
-        item: { ...item, id: 'local_' + Date.now() },
-        savedLocally: true,
-        message: 'Saved locally (database save failed)' 
-      });
+      return res.status(500).json({ success: false, message: 'The Library item could not be saved to the database.' });
     }
     console.log('✅ Library item saved to database:', data.id);
-    res.json({ success: true, item: data, savedToDatabase: true });
+    res.status(201).json({ success: true, item: await libraryItemForClient(data), savedToDatabase: true });
   } catch (err) {
     console.error('❌ Exception inserting library item:', err.message);
-    // Return success with the original item so frontend can save locally
-    res.json({ 
-      success: true, 
-      item: { ...item, id: 'local_' + Date.now() },
-      savedLocally: true,
-      message: 'Saved locally (database error)' 
-    });
+    res.status(500).json({ success: false, message: 'The Library item could not be saved to the database.' });
+  }
+});
+
+// Copy older browser-only or URL-backed Library videos into private Storage.
+// The source URL is validated, DNS-pinned, and every redirect is checked.
+app.post('/api/library/archive-video', async (req, res) => {
+  const userId = req.session && req.session.user ? req.session.user.id : null;
+  if (!userId) return res.status(401).json({ success: false, message: 'Sign in before saving this video permanently.' });
+
+  const { libraryItemId, localItem } = req.body || {};
+  let existingRow = null;
+  let sourceUrl = '';
+  try {
+    if (libraryItemId) {
+      const { data, error } = await supabase
+        .from('library_items')
+        .select('*')
+        .eq('id', libraryItemId)
+        .eq('user_id', userId)
+        .single();
+      if (error || !data) return res.status(404).json({ success: false, message: 'This Library item was not found.' });
+      existingRow = data;
+      const ref = parseStorageReference(data.file_path);
+      if (ref) {
+        const storedItem = await libraryItemForClient(data);
+        if (storedItem.filePath) return res.json({ success: true, item: storedItem, savedToStorage: true });
+        return res.status(503).json({ success: false, message: 'The saved video is already in Storage, but its playback link could not be created.' });
+      }
+      sourceUrl = data.file_path || '';
+    } else {
+      if (!localItem || !/^(local_|vid_)[A-Za-z0-9_-]{1,200}$/.test(String(localItem.id || ''))) {
+        return res.status(400).json({ success: false, message: 'A valid browser-only Library item is required.' });
+      }
+      sourceUrl = String(localItem.filePath || localItem.file_path || '');
+      if (!sourceUrl) return res.status(400).json({ success: false, message: 'This browser-only item has no video link to recover.' });
+      const { data, error } = await supabase
+        .from('library_items')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('file_path', sourceUrl)
+        .maybeSingle();
+      if (error) throw new Error(`Could not check for an existing Library item: ${error.message}`);
+      existingRow = data;
+      const ref = parseStorageReference(existingRow?.file_path);
+      if (ref) {
+        const storedItem = await libraryItemForClient(existingRow);
+        if (storedItem.filePath) return res.json({ success: true, item: storedItem, savedToStorage: true });
+        return res.status(503).json({ success: false, message: 'The saved video is already in Storage, but its playback link could not be created.' });
+      }
+      if (existingRow) sourceUrl = existingRow.file_path || sourceUrl;
+    }
+
+    if (!sourceUrl) return res.status(400).json({ success: false, message: 'This Library item has no video link to recover.' });
+    await ensureGeneratedVideoBucket();
+    const videoBuffer = await downloadPublicVideo(sourceUrl);
+    const stableId = existingRow?.id || String(localItem.id);
+    const objectId = crypto.createHash('sha256').update(`${userId}:${stableId}`).digest('hex').slice(0, 32);
+    const storagePath = `${userId}/${objectId}.mp4`;
+    const storagePathRef = storageReference(GENERATED_VIDEO_BUCKET, storagePath);
+    const { error: uploadError } = await supabase.storage
+      .from(GENERATED_VIDEO_BUCKET)
+      .upload(storagePath, videoBuffer, { contentType: 'video/mp4', cacheControl: '3600', upsert: true });
+    if (uploadError) throw new Error(`Supabase Storage upload failed: ${uploadError.message}`);
+
+    const itemValues = {
+      title: existingRow?.title || String(localItem?.title || 'Recovered AI Video').slice(0, 200),
+      date: existingRow?.date || String(localItem?.date || new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })).slice(0, 40),
+      status: existingRow?.status === 'published' ? 'published' : 'draft',
+      platforms: existingRow?.platforms || (Array.isArray(localItem?.platforms) ? localItem.platforms.slice(0, 10) : ['YouTube', 'Instagram', 'TikTok']),
+      type: existingRow?.type || String(localItem?.type || 'ai-generated').slice(0, 40),
+      file_path: storagePathRef,
+      caption: existingRow?.caption || String(localItem?.caption || '').slice(0, 5000),
+      user_id: userId
+    };
+
+    let savedRow;
+    if (existingRow) {
+      const { data, error } = await supabase.from('library_items').update(itemValues).eq('id', existingRow.id).eq('user_id', userId).select().single();
+      if (error) throw new Error(`Video uploaded, but its Library record could not be updated: ${error.message}`);
+      savedRow = data;
+    } else {
+      const { data, error } = await supabase.from('library_items').insert(itemValues).select().single();
+      if (error) throw new Error(`Video uploaded, but its Library record could not be created: ${error.message}`);
+      savedRow = data;
+    }
+
+    return res.status(201).json({ success: true, item: await libraryItemForClient(savedRow), savedToStorage: true });
+  } catch (err) {
+    console.error('Failed to archive Library video:', err.message);
+    return res.status(502).json({ success: false, message: `Could not save this older video permanently: ${err.message}` });
   }
 });
 
@@ -1069,8 +1305,7 @@ app.get('/auth/youtube', (req, res) => {
   const scopes = [
     'https://www.googleapis.com/auth/youtube.readonly',
     'https://www.googleapis.com/auth/yt-analytics.readonly',
-    'https://www.googleapis.com/auth/userinfo.profile',
-    'https://www.googleapis.com/auth/drive.file'  // Added for video storage
+    'https://www.googleapis.com/auth/userinfo.profile'
   ];
 
   const authUrl = ytOAuth2Client.generateAuthUrl({
@@ -1102,11 +1337,6 @@ app.get('/auth/youtube/callback', async (req, res) => {
     ytOAuth2Client.setCredentials(tokens);
     savedYtTokens = tokens;
     analyticsCache.data = null; // Invalidate cache
-
-    // Also save tokens for Google Drive access
-    process.env.GOOGLE_DRIVE_ACCESS_TOKEN = tokens.access_token || '';
-    process.env.GOOGLE_DRIVE_REFRESH_TOKEN = tokens.refresh_token || '';
-    console.log('✅ Google Drive tokens updated from YouTube OAuth');
 
     // Save to Supabase
     const adminId = await getAdminUserId(req);
@@ -2959,6 +3189,176 @@ app.get('/api/video/status/:id', async (req, res) => {
     return res.status(statusCode).json({ 
       success: false, 
       error: err.response?.data?.message || err.message 
+    });
+  }
+});
+
+// Copy a completed Blotato video into private Supabase Storage and persist its
+// Library row before reporting success to the browser.
+app.post('/api/video/save-generated', async (req, res) => {
+  const { videoId: requestedVideoId, libraryItemId, title, prompt, platforms } = req.body || {};
+  const userId = req.session && req.session.user ? req.session.user.id : null;
+  if (!userId) return res.status(401).json({ success: false, message: 'Sign in before saving this video to your Library.' });
+  if (!BLOTATO_API_KEY) return res.status(503).json({ success: false, message: 'Video storage is unavailable because Blotato is not configured.' });
+
+  let videoId = String(requestedVideoId || '').trim();
+  let retryRow = null;
+  let existingRow = null;
+  let libraryRow = null;
+
+  try {
+    if (libraryItemId) {
+      let retryQuery = supabase.from('library_items').select('*').eq('id', libraryItemId);
+      retryQuery = userId ? retryQuery.eq('user_id', userId) : retryQuery.is('user_id', null);
+      const { data, error } = await retryQuery.single();
+      if (error || !data) return res.status(404).json({ success: false, message: 'The Library item to retry was not found.' });
+      const retryRef = parseStorageReference(data.file_path);
+      if (!retryRef || retryRef.bucket !== GENERATED_VIDEO_BUCKET) {
+        return res.status(400).json({ success: false, message: 'This Library item cannot be retried as a generated video.' });
+      }
+      videoId = retryRef.filePath.split('/').pop().replace(/\.mp4$/i, '');
+      retryRow = data;
+    }
+
+    if (!videoId || !/^[A-Za-z0-9_-]{1,200}$/.test(videoId)) {
+      return res.status(400).json({ success: false, message: 'A valid Blotato video ID is required.' });
+    }
+    const safeVideoId = videoId;
+    const storagePath = retryRow
+      ? parseStorageReference(retryRow.file_path).filePath
+      : `${userId || 'unassigned'}/${safeVideoId}.mp4`;
+    const filePath = storageReference(GENERATED_VIDEO_BUCKET, storagePath);
+
+    existingRow = retryRow;
+    if (!existingRow) {
+      const lookup = await (userId
+        ? supabase.from('library_items').select('*').eq('user_id', userId).eq('file_path', filePath).maybeSingle()
+        : supabase.from('library_items').select('*').is('user_id', null).eq('file_path', filePath).maybeSingle());
+      if (lookup.error) throw new Error(`Could not check for an existing Library item: ${lookup.error.message}`);
+      existingRow = lookup.data;
+    }
+
+    if (existingRow) {
+      const storedItem = await libraryItemForClient(existingRow);
+      if (storedItem.filePath) {
+        if (existingRow.status !== 'saving' && existingRow.status !== 'save_failed') {
+          return res.json({ success: true, savedToDatabase: true, savedToStorage: true, item: storedItem });
+        }
+        const { data: readyRow, error: readyError } = await supabase
+          .from('library_items')
+          .update({ status: 'draft' })
+          .eq('id', existingRow.id)
+          .select()
+          .single();
+        if (readyError) throw new Error(`The stored video could not be marked ready: ${readyError.message}`);
+        return res.json({ success: true, savedToDatabase: true, savedToStorage: true, item: await libraryItemForClient(readyRow) });
+      }
+    }
+
+    console.log('📦 Saving generated video to persistent storage:', safeVideoId, 'User ID:', userId);
+
+    const statusRes = await axios.get(
+      `${BLOTATO_BASE_URL}/videos/creations/${encodeURIComponent(videoId)}`,
+      { headers: { 'blotato-api-key': BLOTATO_API_KEY }, timeout: 30000 }
+    );
+    const blotatoItem = statusRes.data?.item;
+    if (!blotatoItem || blotatoItem.status !== 'done' || !blotatoItem.mediaUrl) {
+      if (existingRow) {
+        const { data: failedRow, error: updateError } = await supabase
+          .from('library_items')
+          .update({ status: 'save_failed' })
+          .eq('id', existingRow.id)
+          .select()
+          .single();
+        if (!updateError) existingRow = failedRow;
+      }
+      return res.status(409).json({
+        success: false,
+        item: existingRow ? await libraryItemForClient(existingRow) : null,
+        message: 'Blotato has not finished this video yet. Please retry in a moment.'
+      });
+    }
+
+    const itemValues = {
+      title: title || existingRow?.title || 'AI Generated Video',
+      date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      status: 'saving',
+      platforms: Array.isArray(platforms) && platforms.length ? platforms : (existingRow?.platforms || ['YouTube', 'Instagram', 'TikTok']),
+      type: 'ai-generated',
+      file_path: filePath,
+      caption: prompt || existingRow?.caption || '',
+      user_id: userId
+    };
+
+    if (existingRow) {
+      const { data, error } = await supabase
+        .from('library_items')
+        .update(itemValues)
+        .eq('id', existingRow.id)
+        .select()
+        .single();
+      if (error) throw new Error(`Could not prepare the Library item: ${error.message}`);
+      libraryRow = data;
+    } else {
+      const { data, error } = await supabase
+        .from('library_items')
+        .insert(itemValues)
+        .select()
+        .single();
+      if (error) throw new Error(`Could not create the Library item: ${error.message}`);
+      libraryRow = data;
+    }
+
+    await ensureGeneratedVideoBucket();
+    const videoBuffer = await downloadPublicVideo(blotatoItem.mediaUrl);
+
+    const { error: uploadError } = await supabase.storage
+      .from(GENERATED_VIDEO_BUCKET)
+      .upload(storagePath, videoBuffer, {
+        contentType: 'video/mp4',
+        cacheControl: '3600',
+        upsert: true
+      });
+    if (uploadError) throw new Error(`Supabase Storage upload failed: ${uploadError.message}`);
+
+    const { data: savedRow, error: updateError } = await supabase
+      .from('library_items')
+      .update({ status: 'draft', file_path: filePath })
+      .eq('id', libraryRow.id)
+      .select()
+      .single();
+    if (updateError) throw new Error(`The video uploaded, but its Library status could not be updated: ${updateError.message}`);
+
+    console.log('✅ Generated video saved to Storage and Library:', savedRow.id);
+    return res.status(201).json({
+      success: true,
+      savedToDatabase: true,
+      savedToStorage: true,
+      item: await libraryItemForClient(savedRow)
+    });
+  } catch (err) {
+    console.error('❌ Failed to persist generated video:', err.message);
+    const rowToMarkFailed = libraryRow || existingRow;
+    if (rowToMarkFailed) {
+      const { data: failedRow, error: markError } = await supabase
+        .from('library_items')
+        .update({ status: 'save_failed' })
+        .eq('id', rowToMarkFailed.id)
+        .select()
+        .single();
+      if (markError) {
+        console.error('Could not mark Library item as save_failed:', markError.message);
+        libraryRow = { ...rowToMarkFailed, status: 'save_failed' };
+      } else {
+        libraryRow = failedRow;
+      }
+    }
+    const clientItem = libraryRow ? await libraryItemForClient(libraryRow) : null;
+    return res.status(502).json({
+      success: false,
+      savedToDatabase: !!libraryRow,
+      item: clientItem,
+      message: `Video was created, but saving it to the Library failed: ${err.message}`
     });
   }
 });
