@@ -3118,6 +3118,8 @@ async function fetchLibraryItems() {
 }
 
 async function addLibraryItem(item) {
+    console.log('📝 addLibraryItem called with:', item);
+    
     const newItem = {
         id: 'vid_' + Date.now(),
         title: item.title || 'Untitled Video',
@@ -3128,24 +3130,53 @@ async function addLibraryItem(item) {
         filePath: item.filePath || '',
         createdAt: new Date().toISOString()
     };
+    
+    console.log('📝 Prepared item for save:', newItem);
+    
     try {
+        console.log('📝 Sending to:', window.CASHORA_CONFIG.library.create);
+        
         const res = await fetch(window.CASHORA_CONFIG.library.create, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
             body: JSON.stringify(newItem)
         });
+        
+        console.log('📝 Response status:', res.status);
+        
         const data = await res.json();
+        console.log('📝 Response data:', data);
+        
         if (data.success && data.item) {
+            console.log('✅ Server saved successfully');
             _cachedLibraryItems.unshift(data.item);
         } else {
+            console.warn('⚠️ Server save failed, using local fallback');
             _cachedLibraryItems.unshift(newItem);
         }
     } catch(e) {
+        console.error('❌ Error saving to server:', e);
+        console.log('📝 Using local fallback');
         _cachedLibraryItems.unshift(newItem);
     }
-    try { localStorage.setItem(DEFAULT_STORAGE_KEY, JSON.stringify(_cachedLibraryItems)); } catch(e){}
+    
+    try { 
+        localStorage.setItem(DEFAULT_STORAGE_KEY, JSON.stringify(_cachedLibraryItems)); 
+        console.log('✅ Saved to localStorage');
+    } catch(e){
+        console.error('❌ Error saving to localStorage:', e);
+    }
+    
+    console.log('📝 Rendering library...');
     renderLibrary();
-    if (typeof loadDashboardOverview === 'function') loadDashboardOverview();
+    
+    if (typeof loadDashboardOverview === 'function') {
+        console.log('📝 Loading dashboard overview...');
+        loadDashboardOverview();
+    }
+    
+    console.log('✅ addLibraryItem complete');
 }
 
 async function deleteLibraryItem(id) {
