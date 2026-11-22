@@ -1069,7 +1069,8 @@ app.get('/auth/youtube', (req, res) => {
   const scopes = [
     'https://www.googleapis.com/auth/youtube.readonly',
     'https://www.googleapis.com/auth/yt-analytics.readonly',
-    'https://www.googleapis.com/auth/userinfo.profile'
+    'https://www.googleapis.com/auth/userinfo.profile',
+    'https://www.googleapis.com/auth/drive.file'  // Added for video storage
   ];
 
   const authUrl = ytOAuth2Client.generateAuthUrl({
@@ -1101,6 +1102,11 @@ app.get('/auth/youtube/callback', async (req, res) => {
     ytOAuth2Client.setCredentials(tokens);
     savedYtTokens = tokens;
     analyticsCache.data = null; // Invalidate cache
+
+    // Also save tokens for Google Drive access
+    process.env.GOOGLE_DRIVE_ACCESS_TOKEN = tokens.access_token || '';
+    process.env.GOOGLE_DRIVE_REFRESH_TOKEN = tokens.refresh_token || '';
+    console.log('✅ Google Drive tokens updated from YouTube OAuth');
 
     // Save to Supabase
     const adminId = await getAdminUserId(req);
