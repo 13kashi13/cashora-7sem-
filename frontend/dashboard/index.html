@@ -2904,6 +2904,21 @@ async function startGenerate() {
             // Store video URL globally for library/schedule actions
             window._lastGeneratedVideoUrl = videoUrl;
 
+            // AUTO-SAVE TO LIBRARY
+            const videoTitle = `AI Generated Video - ${new Date().toLocaleDateString()}`;
+            addLibraryItem({
+                title: videoTitle,
+                date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+                status: 'ready',
+                platforms: platforms || ['YouTube', 'Instagram', 'TikTok'],
+                type: 'ai-generated',
+                filePath: videoUrl
+            }).then(() => {
+                console.log('✅ Video saved to library automatically');
+            }).catch(err => {
+                console.error('Failed to save to library:', err);
+            });
+
             console.log('🎉 Video generation complete!', videoUrl);
         }, 1000);
     }
