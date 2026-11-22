@@ -51,7 +51,9 @@ window.CASHORA_CONFIG = {
   video: {
     enhancePrompt: `${API_BASE_URL}/api/video/enhance-prompt`,
     generate: `${API_BASE_URL}/api/video/generate`,
-    status: (id) => `${API_BASE_URL}/api/video/status/${id}`
+    status: (id) => `${API_BASE_URL}/api/video/status/${id}`,
+    saveToDrive: `${API_BASE_URL}/api/video/save-to-drive`,
+    driveStatus: `${API_BASE_URL}/api/video/drive-status`
   },
   
   youtube: {

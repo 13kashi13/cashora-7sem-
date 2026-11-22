@@ -2973,6 +2973,61 @@ function getStatusMessage(status) {
   return messages[status] || 'Processing...';
 }
 
+// Import Google Drive service
+const googleDriveService = require('./src/services/googleDrive');
+
+// Save video to Google Drive
+app.post('/api/video/save-to-drive', async (req, res) => {
+  try {
+    const { videoUrl, title, prompt } = req.body;
+
+    if (!videoUrl) {
+      return res.status(400).json({ success: false, error: 'Video URL is required' });
+    }
+
+    const fileName = `${title || 'AI_Video'}_${Date.now()}.mp4`;
+    
+    console.log('📤 Uploading video to Google Drive:', fileName);
+    
+    const result = await googleDriveService.uploadVideoFromUrl(videoUrl, fileName);
+
+    if (result.success) {
+      // Also save metadata to localStorage-friendly format
+      return res.json({
+        success: true,
+        driveFileId: result.fileId,
+        driveUrl: result.webViewLink,
+        directUrl: result.directUrl,
+        title: title,
+        prompt: prompt,
+        thumbnail: videoUrl, // Use original as thumbnail
+        createdAt: new Date().toISOString(),
+        message: 'Video saved to Google Drive successfully!'
+      });
+    } else {
+      return res.status(500).json({
+        success: false,
+        error: result.error || 'Failed to upload to Google Drive',
+        fallbackUrl: videoUrl // Return original URL as fallback
+      });
+    }
+
+  } catch (err) {
+    console.error('Failed to save video to Drive:', err.message);
+    return res.status(500).json({
+      success: false,
+      error: err.message,
+      fallbackUrl: req.body.videoUrl
+    });
+  }
+});
+
+// Check Google Drive connection
+app.get('/api/video/drive-status', async (req, res) => {
+  const status = await googleDriveService.testConnection();
+  res.json(status);
+});
+
 // ─── Unified Dashboard Overview (Real Live Numbers) ─────────────────────────
 app.get('/api/dashboard/overview', async (req, res) => {
   try {

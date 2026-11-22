@@ -2882,7 +2882,7 @@ async function startGenerate() {
         // Show final step
         updateProgress(4, promptSteps, 'Video complete!');
 
-        setTimeout(() => {
+        setTimeout(async () => {
             document.getElementById('progressPanel').classList.remove('visible');
             document.getElementById('doneCard').classList.add('visible');
 
@@ -2904,26 +2904,73 @@ async function startGenerate() {
             // Store video URL globally for library/schedule actions
             window._lastGeneratedVideoUrl = videoUrl;
 
-            // AUTO-SAVE TO LIBRARY
-            console.log('🔵 AUTO-SAVE: Starting auto-save to library...');
-            console.log('🔵 Video URL:', videoUrl);
-            console.log('🔵 Platforms:', platforms);
+            // AUTO-SAVE TO GOOGLE DRIVE
+            console.log('💾 Saving video to Google Drive...');
             
             const videoTitle = `AI Generated Video - ${new Date().toLocaleDateString()}`;
-            addLibraryItem({
-                title: videoTitle,
-                date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-                status: 'ready',
-                platforms: platforms || ['YouTube', 'Instagram', 'TikTok'],
-                type: 'ai-generated',
-                filePath: videoUrl
-            }).then(() => {
-                console.log('✅ Video saved to library automatically');
-                alert('✅ Video saved to library! Check the Library page.');
-            }).catch(err => {
-                console.error('❌ Failed to save to library:', err);
-                alert('❌ Failed to save video to library: ' + err.message);
-            });
+            const userPrompt = document.getElementById('videoPrompt')?.value || 'AI video';
+            
+            try {
+                const driveResponse = await fetch(CASHORA_CONFIG.video.saveToDrive, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        videoUrl: videoUrl,
+                        title: videoTitle,
+                        prompt: userPrompt
+                    })
+                });
+
+                const driveData = await driveResponse.json();
+                
+                if (driveData.success) {
+                    console.log('✅ Video saved to Google Drive:', driveData.driveUrl);
+                    
+                    // Save to library with Drive URL
+                    await addLibraryItem({
+                        title: videoTitle,
+                        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+                        status: 'ready',
+                        platforms: platforms || ['YouTube', 'Instagram', 'TikTok'],
+                        type: 'ai-generated',
+                        filePath: driveData.directUrl || videoUrl,
+                        driveFileId: driveData.driveFileId,
+                        driveUrl: driveData.driveUrl,
+                        originalUrl: videoUrl
+                    });
+                    
+                    alert('✅ Video saved to Google Drive and Library!');
+                } else {
+                    console.warn('⚠️ Drive save failed, using fallback:', driveData.error);
+                    
+                    // Fallback: save with original URL
+                    await addLibraryItem({
+                        title: videoTitle,
+                        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+                        status: 'ready',
+                        platforms: platforms || ['YouTube', 'Instagram', 'TikTok'],
+                        type: 'ai-generated',
+                        filePath: driveData.fallbackUrl || videoUrl
+                    });
+                    
+                    alert('✅ Video saved to Library (Drive unavailable)');
+                }
+            } catch (err) {
+                console.error('❌ Failed to save:', err);
+                
+                // Last resort: localStorage only
+                await addLibraryItem({
+                    title: videoTitle,
+                    date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+                    status: 'ready',
+                    platforms: platforms || ['YouTube', 'Instagram', 'TikTok'],
+                    type: 'ai-generated',
+                    filePath: videoUrl
+                });
+                
+                alert('⚠️ Video saved to local storage only. Set up Google Drive for permanent storage.');
+            }
 
             console.log('🎉 Video generation complete!', videoUrl);
         }, 1000);
