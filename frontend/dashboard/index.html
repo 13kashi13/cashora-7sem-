@@ -848,7 +848,7 @@
                     <h3>Content Ready</h3>
                     <p>Your video has been generated and is ready to publish to your selected platforms.</p>
                     <div class="done-actions">
-                        <button class="done-btn primary" onclick="showPage('library')">View in Library</button>
+                        <button class="done-btn primary" onclick="manualSaveToLibrary()">💾 Save to Library</button>
                         <button class="done-btn" onclick="scheduleCurrentGeneratedVideo()" style="background:#13183a; border:1px solid #2a3575; color:#8899ff;">Schedule Post</button>
                         <button class="done-btn secondary" onclick="resetCreate()">Create Another</button>
                     </div>
@@ -2905,6 +2905,10 @@ async function startGenerate() {
             window._lastGeneratedVideoUrl = videoUrl;
 
             // AUTO-SAVE TO LIBRARY
+            console.log('🔵 AUTO-SAVE: Starting auto-save to library...');
+            console.log('🔵 Video URL:', videoUrl);
+            console.log('🔵 Platforms:', platforms);
+            
             const videoTitle = `AI Generated Video - ${new Date().toLocaleDateString()}`;
             addLibraryItem({
                 title: videoTitle,
@@ -2915,12 +2919,41 @@ async function startGenerate() {
                 filePath: videoUrl
             }).then(() => {
                 console.log('✅ Video saved to library automatically');
+                alert('✅ Video saved to library! Check the Library page.');
             }).catch(err => {
-                console.error('Failed to save to library:', err);
+                console.error('❌ Failed to save to library:', err);
+                alert('❌ Failed to save video to library: ' + err.message);
             });
 
             console.log('🎉 Video generation complete!', videoUrl);
         }, 1000);
+    }
+
+    // Manual save to library (backup button)
+    function manualSaveToLibrary() {
+        const videoUrl = window._lastGeneratedVideoUrl;
+        if (!videoUrl) {
+            alert('❌ No video URL found. Please try generating again.');
+            return;
+        }
+        
+        console.log('🔵 MANUAL SAVE: Saving to library...');
+        const videoTitle = `AI Generated Video - ${new Date().toLocaleDateString()}`;
+        
+        addLibraryItem({
+            title: videoTitle,
+            date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+            status: 'ready',
+            platforms: ['YouTube', 'Instagram', 'TikTok'],
+            type: 'ai-generated',
+            filePath: videoUrl
+        }).then(() => {
+            alert('✅ Video saved to library! Go to Library page to see it.');
+            console.log('✅ Manual save successful');
+        }).catch(err => {
+            alert('❌ Failed to save: ' + err.message);
+            console.error('❌ Manual save failed:', err);
+        });
     }
 
     function runStep(i, stepsList) {
