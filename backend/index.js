@@ -440,6 +440,20 @@ async function triggerPosting({ videoPath, caption, platforms, email }) {
   return response.status;
 }
 
+// The deployed scheduled_posts table has no email column. Resolve the owner
+// email from users when a queued post is processed.
+async function getScheduledPostEmail(post) {
+  if (post.email) return post.email;
+  if (!post.user_id) return 'demo@cashora.tech';
+  const { data, error } = await supabase
+    .from('users')
+    .select('email')
+    .eq('id', post.user_id)
+    .maybeSingle();
+  if (error) console.error('[SCHEDULER] Could not resolve post owner email:', error.message);
+  return data?.email || 'demo@cashora.tech';
+}
+
 // Scheduler loop: runs every 10 seconds to check if any post is due
 setInterval(async () => {
   try {
@@ -468,7 +482,7 @@ setInterval(async () => {
           videoPath: post.video_path,
           caption: post.caption,
           platforms: post.platforms,
-          email: post.email
+          email: await getScheduledPostEmail(post)
         });
 
         await supabase
@@ -481,7 +495,7 @@ setInterval(async () => {
           status: 'success',
           platforms: post.platforms || 'all',
           message: `Scheduled post "${post.title || post.caption || 'Video'}" published successfully!`,
-          email: post.email || 'unknown'
+          email: await getScheduledPostEmail(post)
         });
 
       } catch (err) {
@@ -495,7 +509,7 @@ setInterval(async () => {
           status: 'failed',
           platforms: post.platforms || 'all',
           message: `Scheduled post failed: ${err.message}`,
-          email: post.email || 'unknown'
+          email: await getScheduledPostEmail(post)
         });
       }
     }
@@ -552,7 +566,6 @@ app.post('/api/schedule-post', upload.single('video'), async (req, res) => {
   }
 
   const userId = req.session && req.session.user ? req.session.user.id : null;
-  const userEmail = req.session && req.session.user ? req.session.user.email : 'demo@cashora.tech';
 
   const postPayload = {
     title: title || caption || filename || 'Scheduled Video',
@@ -562,7 +575,6 @@ app.post('/api/schedule-post', upload.single('video'), async (req, res) => {
     status: 'scheduled',
     video_path: videoPath,
     filename: filename,
-    email: userEmail,
     user_id: userId
   };
 
@@ -628,7 +640,7 @@ app.post('/api/scheduled-posts/:id/trigger', async (req, res) => {
         videoPath: post.video_path,
         caption: post.caption,
         platforms: post.platforms,
-        email: post.email
+        email: await getScheduledPostEmail(post)
       });
       await supabase
         .from('scheduled_posts')
