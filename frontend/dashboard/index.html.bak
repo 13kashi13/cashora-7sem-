@@ -657,42 +657,6 @@
                         <div class="form-group">
                             <label class="form-label">Platforms</label>
                             <div class="platform-grid" id="platformGrid">
-                                <div class="platform-toggle selected" onclick="togglePlatform(this)">
-                                    <div class="pt-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.8"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></div>
-                                    <span class="pt-name">YouTube</span>
-                                </div>
-                                <div class="platform-toggle selected" onclick="togglePlatform(this)">
-                                    <div class="pt-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.8"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/></svg></div>
-                                    <span class="pt-name">Instagram</span>
-                                </div>
-                                <div class="platform-toggle selected" onclick="togglePlatform(this)">
-                                    <div class="pt-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.8"><path d="M18 2h-3a5 5 0 00-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 011-1h3z"/></svg></div>
-                                    <span class="pt-name">Facebook</span>
-                                </div>
-                                <div class="platform-toggle selected" onclick="togglePlatform(this)">
-                                    <div class="pt-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.8"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 006 0v-1a10 10 0 10-4 8"/></svg></div>
-                                    <span class="pt-name">Threads</span>
-                                </div>
-                                <div class="platform-toggle" onclick="togglePlatform(this)">
-                                    <div class="pt-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.8"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.259 5.622z"/></svg></div>
-                                    <span class="pt-name">Twitter / X</span>
-                                </div>
-                                <div class="platform-toggle" onclick="togglePlatform(this)">
-                                    <div class="pt-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.8"><path d="M16 8a6 6 0 016 6v7h-4v-7a2 2 0 00-2-2 2 2 0 00-2 2v7h-4v-7a6 6 0 016-6z"/><rect x="2" y="9" width="4" height="12"/><circle cx="4" cy="4" r="2"/></svg></div>
-                                    <span class="pt-name">LinkedIn</span>
-                                </div>
-                                <div class="platform-toggle" onclick="togglePlatform(this)">
-                                    <div class="pt-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.8"><path d="M12 10.8c-1.087-2.114-4.046-6.053-6.798-7.995C2.566 1.018 1.561 1.625 1.561 3.25c0 1.624.475 7.635 1.353 9.497 1.408 2.983 4.28 3.518 6.444 3.013-3.69 1.157-5.02 4.195-2.73 7.027 3.327 4.116 5.372-2.387 5.372-2.387s2.045 6.503 5.372 2.387c2.29-2.832.96-5.87-2.73-7.027 2.164.505 5.036-.03 6.444-3.013.878-1.862 1.353-7.873 1.353-9.497 0-1.625-1.005-2.232-3.641-.445C16.046 4.747 13.087 8.686 12 10.8z"/></svg></div>
-                                    <span class="pt-name">Bluesky</span>
-                                </div>
-                                <div class="platform-toggle" onclick="togglePlatform(this)">
-                                    <div class="pt-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M8 12a4 4 0 108 0 4 4 0 00-8 0z"/><path d="M10 17l2 4 2-4"/></svg></div>
-                                    <span class="pt-name">Pinterest</span>
-                                </div>
-                                <div class="platform-toggle selected" onclick="togglePlatform(this)">
-                                    <div class="pt-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.8"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1V9.01a6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V8.69a8.22 8.22 0 004.87 1.6V6.84a4.85 4.85 0 01-1.1-.15z"/></svg></div>
-                                    <span class="pt-name">TikTok</span>
-                                </div>
                                 <div class="platform-toggle" onclick="togglePlatform(this)">
                                     <div class="pt-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="8 21 12 17 16 21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></div>
                                     <span class="pt-name">Web Embed</span>
@@ -895,7 +859,6 @@
                             <div class="conn-toggle off" id="distThreadsToggle"></div>
                         </div>
                     </div>
-                    <div class="conn-item"><div class="conn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#e94057" stroke-width="1.8"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-5.77-.39 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1V9.01a6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V8.69a8.22 8.22 0 004.87 1.6V6.84a4.85 4.85 0 01-1.1-.15z"/></svg></div><div class="conn-info"><div class="conn-name">TikTok</div><div class="conn-handle">@cashora.ai</div></div><div class="conn-toggle"></div></div>
                     <div class="conn-item"><div class="conn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#888" stroke-width="1.8"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.259 5.622z"/></svg></div><div class="conn-info"><div class="conn-name">Twitter / X</div><div class="conn-handle">Not connected</div></div><div class="conn-toggle off"></div></div>
                     <div class="conn-item"><div class="conn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2867b2" stroke-width="1.8"><path d="M16 8a6 6 0 016 6v7h-4v-7a2 2 0 00-2-2 2 2 0 00-2 2v7h-4v-7a6 6 0 016-6z"/><rect x="2" y="9" width="4" height="12"/><circle cx="4" cy="4" r="2"/></svg></div><div class="conn-info"><div class="conn-name">LinkedIn</div><div class="conn-handle">Not connected</div></div><div class="conn-toggle off"></div></div>
                 </div>
@@ -989,10 +952,6 @@
                             <div class="platform-toggle" onclick="togglePlatform(this)">
                                 <div class="pt-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M8 12a4 4 0 108 0 4 4 0 00-8 0z"/><path d="M10 17l2 4 2-4"/></svg></div>
                                 <span class="pt-name">Pinterest</span>
-                            </div>
-                            <div class="platform-toggle selected" onclick="togglePlatform(this)">
-                                <div class="pt-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.8"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1V9.01a6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V8.69a8.22 8.22 0 004.87 1.6V6.84a4.85 4.85 0 01-1.1-.15z"/></svg></div>
-                                <span class="pt-name">TikTok</span>
                             </div>
                         </div>
                     </div>
@@ -1091,10 +1050,6 @@
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12.186 24C5.467 24 0 18.533 0 11.814 0 5.094 5.467 0 12.186 0c6.643 0 11.97 5.176 11.97 11.814 0 .614-.047 1.229-.14 1.833h-4.321c.047-.367.07-.74.07-1.12 0-4.148-3.418-7.566-7.579-7.566-4.162 0-7.58 3.418-7.58 7.566 0 4.149 3.418 7.567 7.58 7.567 2.193 0 4.18-.946 5.568-2.457l3.078 2.825C18.423 22.378 15.485 24 12.186 24z"/></svg>
                     Threads
                 </button>
-                <button type="button" class="an-plat-pill" onclick="switchPlatform('tiktok')" data-plat="tiktok" style="padding:8px 14px;border-radius:8px;font-size:12.5px;font-weight:600;display:inline-flex;align-items:center;gap:7px;cursor:pointer;border:1px solid var(--border);background:#121212;color:var(--muted);transition:all .15s;">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64c.298 0 .59.05.86.15V9.4a6.33 6.33 0 0 0-6.33 6.33 6.34 6.34 0 0 0 10.82 4.48c.03-.03.06-.06.09-.09V11.2a8.16 8.16 0 0 0 4.67 1.49V9.24a4.85 4.85 0 0 1-.03-.05v-.01a4.83 4.83 0 0 1 0-2.49z"/></svg>
-                    TikTok
-                </button>
                 <button type="button" class="an-plat-pill" onclick="switchPlatform('twitter')" data-plat="twitter" style="padding:8px 14px;border-radius:8px;font-size:12.5px;font-weight:600;display:inline-flex;align-items:center;gap:7px;cursor:pointer;border:1px solid var(--border);background:#121212;color:var(--muted);transition:all .15s;">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.259 5.622z"/></svg>
                     Twitter / X
@@ -1108,7 +1063,6 @@
                 <option value="youtube">YouTube</option>
                 <option value="instagram">Instagram</option>
                 <option value="threads">Threads</option>
-                <option value="tiktok">TikTok</option>
                 <option value="twitter">Twitter / X</option>
                 <option value="bluesky">Bluesky</option>
             </select>
@@ -1285,79 +1239,6 @@
                     </div>
                     <div id="igTopPostsList">
                         <div style="padding:20px 0;text-align:center;color:var(--muted);font-size:12px;">Loading posts...</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- TikTok Analytics -->
-        <div class="platform-analytics" id="platform-tiktok" style="display:none;">
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;">
-                <div style="width:32px;height:32px;border-radius:7px;background:#141414;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#e94057" stroke-width="1.8"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-5.77-.39 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1V9.01a6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V8.69a8.22 8.22 0 004.87 1.6V6.84a4.85 4.85 0 01-1.1-.15z"/></svg>
-                </div>
-                <div><div style="font-size:16px;font-weight:700;color:var(--white);">TikTok Analytics</div><div style="font-size:12px;color:var(--muted);">@cashora.ai</div></div>
-            </div>
-
-            <!-- TikTok stats row -->
-            <div class="stats-grid" style="margin-bottom:20px;">
-                <div class="stat-card"><div class="stat-row"><span class="stat-label">Video Views</span></div><div class="stat-value">8,900</div><div class="stat-change up"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>+24%</div></div>
-                <div class="stat-card"><div class="stat-row"><span class="stat-label">Likes</span></div><div class="stat-value">1,340</div><div class="stat-change up"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>+19%</div></div>
-                <div class="stat-card"><div class="stat-row"><span class="stat-label">Shares</span></div><div class="stat-value">240</div><div class="stat-change up"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>+31%</div></div>
-                <div class="stat-card"><div class="stat-row"><span class="stat-label">Followers</span></div><div class="stat-value">+220</div><div class="stat-change up"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>+12%</div></div>
-            </div>
-
-            <!-- TikTok charts -->
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
-                <div class="chart-card">
-                    <div class="chart-title">Views by Day</div>
-                    <div class="chart-sub">Last 7 days</div>
-                    <div id="tiktok-views-chart" style="height:140px;margin-top:12px;"></div>
-                </div>
-                <div class="chart-card">
-                    <div class="chart-title">Engagement Rate</div>
-                    <div class="chart-sub">Interactions per view</div>
-                    <div id="tiktok-engagement-chart" style="height:140px;margin-top:12px;"></div>
-                </div>
-            </div>
-
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
-                <div class="chart-card">
-                    <div class="chart-title">For You Page vs Following</div>
-                    <div class="chart-sub">Traffic source breakdown</div>
-                    <div id="tiktok-traffic-chart" style="height:140px;margin-top:12px;"></div>
-                </div>
-                <div class="chart-card">
-                    <div class="chart-title">Average Watch Time</div>
-                    <div class="chart-sub">Seconds per video</div>
-                    <div id="tiktok-watchtime-chart" style="height:140px;margin-top:12px;"></div>
-                </div>
-            </div>
-
-            <div class="chart-card">
-                <div class="chart-title">Top Performing Videos</div>
-                <div class="chart-sub">This month on TikTok</div>
-                <div style="display:flex;flex-direction:column;gap:0;margin-top:12px;">
-                    <div style="display:grid;grid-template-columns:1fr 80px 70px 70px;gap:10px;padding:10px 0;border-bottom:1px solid var(--border2);font-size:10.5px;font-weight:600;color:var(--muted2);text-transform:uppercase;letter-spacing:.05em;">
-                        <span>Video</span><span style="text-align:right;">Views</span><span style="text-align:right;">Likes</span><span style="text-align:right;">Shares</span>
-                    </div>
-                    <div style="display:grid;grid-template-columns:1fr 80px 70px 70px;gap:10px;padding:10px 0;border-bottom:1px solid var(--border2);align-items:center;">
-                        <span style="font-size:13px;color:var(--light);">Turn Ideas Into Income</span>
-                        <span style="font-size:13px;font-weight:600;color:var(--white);text-align:right;">5,200</span>
-                        <span style="font-size:13px;color:var(--muted);text-align:right;">840</span>
-                        <span style="font-size:13px;color:var(--muted);text-align:right;">180</span>
-                    </div>
-                    <div style="display:grid;grid-template-columns:1fr 80px 70px 70px;gap:10px;padding:10px 0;border-bottom:1px solid var(--border2);align-items:center;">
-                        <span style="font-size:13px;color:var(--light);">AI Tools for Marketers</span>
-                        <span style="font-size:13px;font-weight:600;color:var(--white);text-align:right;">2,400</span>
-                        <span style="font-size:13px;color:var(--muted);text-align:right;">320</span>
-                        <span style="font-size:13px;color:var(--muted);text-align:right;">40</span>
-                    </div>
-                    <div style="display:grid;grid-template-columns:1fr 80px 70px 70px;gap:10px;padding:10px 0;align-items:center;">
-                        <span style="font-size:13px;color:var(--light);">Creator Mistakes</span>
-                        <span style="font-size:13px;font-weight:600;color:var(--white);text-align:right;">1,300</span>
-                        <span style="font-size:13px;color:var(--muted);text-align:right;">180</span>
-                        <span style="font-size:13px;color:var(--muted);text-align:right;">20</span>
                     </div>
                 </div>
             </div>
@@ -1914,7 +1795,7 @@
                                     <div class="form-field">
                                         <label for="settingsDefaultAspect">Default Video Format</label>
                                         <select class="settings-field-input" id="settingsDefaultAspect">
-                                            <option value="9:16">9:16 Vertical (Reels / Shorts / TikTok)</option>
+                                            <option value="9:16">9:16 Vertical (Reels / Shorts)</option>
                                             <option value="16:9">16:9 Landscape (YouTube Standard)</option>
                                             <option value="1:1">1:1 Square (Instagram Post / Feed)</option>
                                         </select>
@@ -2848,8 +2729,6 @@ function getPlatformIcon(plat) {
         return `<div class="p-icon" title="Bluesky"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#0285ff" stroke-width="1.8"><path d="M12 10.8c-1.087-2.114-4.046-6.053-6.798-7.995C2.566 1.018 1.561 1.625 1.561 3.25c0 1.624.475 7.635 1.353 9.497 1.408 2.983 4.28 3.518 6.444 3.013-3.69 1.157-5.02 4.195-2.73 7.027 3.327 4.116 5.372-2.387 5.372-2.387s2.045 6.503 5.372 2.387c2.29-2.832.96-5.87-2.73-7.027 2.164.505 5.036-.03 6.444-3.013.878-1.862 1.353-7.873 1.353-9.497 0-1.625-1.005-2.232-3.641-.445C16.046 4.747 13.087 8.686 12 10.8z"/></svg></div>`;
     } else if (p.includes('pin')) {
         return `<div class="p-icon" title="Pinterest"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#e60023" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M8 12a4 4 0 108 0 4 4 0 00-8 0z"/><path d="M10 17l2 4 2-4"/></svg></div>`;
-    } else if (p.includes('tik')) {
-        return `<div class="p-icon" title="TikTok"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#e94057" stroke-width="1.8"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-5.77-.39 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1V9.01a6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V8.69a8.22 8.22 0 004.87 1.6V6.84a4.85 4.85 0 01-1.1-.15z"/></svg></div>`;
     } else if (p.includes('link')) {
         return `<div class="p-icon" title="LinkedIn"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#2867b2" stroke-width="1.8"><path d="M16 8a6 6 0 016 6v7h-4v-7a2 2 0 00-2-2 2 2 0 00-2 2v7h-4v-7a6 6 0 016-6z"/><rect x="2" y="9" width="4" height="12"/><circle cx="4" cy="4" r="2"/></svg></div>`;
     } else if (p.includes('twitter') || p.includes('x')) {
@@ -2967,7 +2846,6 @@ function switchPlatform(platform) {
         youtube:   { border: 'rgba(255,0,51,0.45)', bg: 'rgba(255,0,51,0.14)' },
         instagram: { border: 'rgba(225,48,108,0.45)', bg: 'rgba(225,48,108,0.14)' },
         threads:   { border: 'rgba(255,255,255,0.4)', bg: 'rgba(255,255,255,0.08)' },
-        tiktok:    { border: 'rgba(6,182,212,0.45)', bg: 'rgba(6,182,212,0.14)' },
         twitter:   { border: 'rgba(255,255,255,0.4)', bg: 'rgba(255,255,255,0.08)' },
         bluesky:   { border: 'rgba(2,133,255,0.55)', bg: 'rgba(2,133,255,0.18)' }
     };

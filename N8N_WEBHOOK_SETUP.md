@@ -23,7 +23,7 @@ Backend sends webhook to n8n
   ↓
 n8n workflow receives video data
   ↓
-n8n posts to YouTube/Instagram/TikTok/Discord/etc.
+n8n posts to YouTube/Instagram/Discord/etc.
   ↓
 ✅ Video published automatically!
 ```
@@ -63,7 +63,7 @@ Your n8n workflow should have these nodes:
   "videoUrl": "https://drive.google.com/uc?export=download&id=...",
   "title": "AI Generated Video",
   "caption": "Check out this amazing video!",
-  "platforms": ["YouTube", "Instagram", "TikTok"],
+  "platforms": ["YouTube", "Instagram"],
   "scheduledTime": "2026-11-22T18:00:00Z",
   "driveFileId": "1abc123xyz",
   "thumbnailUrl": "https://...",
@@ -77,7 +77,6 @@ Your n8n workflow should have these nodes:
 ### 3. Platform Nodes
 - **YouTube Upload Node**: Uses YouTube API to upload video
 - **Instagram Post Node**: Posts to Instagram (requires business account)
-- **TikTok Upload Node**: Uploads to TikTok
 - **Discord Webhook Node**: Posts to Discord channel
 - **Twitter Post Node**: Posts to Twitter/X
 
@@ -131,7 +130,7 @@ POST https://fixitfelix.app.n8n.cloud/webhook/blotato-website-post
   "timezone": "Asia/Kolkata",
   
   // Platforms
-  "platforms": ["YouTube", "Instagram", "TikTok", "Discord"],
+  "platforms": ["YouTube", "Instagram", "Discord"],
   
   // Metadata
   "tags": ["ai", "automation", "video"],

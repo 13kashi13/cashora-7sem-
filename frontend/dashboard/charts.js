@@ -228,49 +228,6 @@ window.updateInstagramCharts = function(chartsData) {
     setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
 };
 
-
-    // TIKTOK
-    new ApexCharts(document.querySelector("#tiktok-views-chart"), {
-        ...baseOptions,
-        chart: { ...baseOptions.chart, type: 'bar', height: 140 },
-        series: [{ name: 'Views', data: [950, 1200, 1100, 1450, 1600, 1750, 1950] }],
-        plotOptions: { bar: { borderRadius: 6, columnWidth: '60%' } },
-        xaxis: { categories: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] },
-        colors: ['#e94057'],
-        fill: { type: 'gradient', gradient: { gradientToColors: ['#ff6b7d'] } }
-    }).render();
-
-    new ApexCharts(document.querySelector("#tiktok-engagement-chart"), {
-        ...baseOptions,
-        chart: { ...baseOptions.chart, type: 'area', height: 140 },
-        series: [{ name: 'Engagement Rate', data: [13.2, 14.5, 14.1, 15.8, 15.2, 16.4, 15.1] }],
-        xaxis: { categories: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] },
-        yaxis: { labels: { formatter: (val) => val.toFixed(1) + '%' } },
-        colors: ['#e94057'],
-        stroke: { curve: 'smooth', width: 2 }
-    }).render();
-
-    new ApexCharts(document.querySelector("#tiktok-traffic-chart"), {
-        ...baseOptions,
-        chart: { ...baseOptions.chart, type: 'donut', height: 140 },
-        series: [68, 22, 10],
-        labels: ['For You Page', 'Following', 'Profile'],
-        colors: ['#e94057', '#f55969', '#ff7a89'],
-        legend: { show: true, position: 'bottom' },
-        plotOptions: { pie: { donut: { size: '65%' } } }
-    }).render();
-
-    new ApexCharts(document.querySelector("#tiktok-watchtime-chart"), {
-        ...baseOptions,
-        chart: { ...baseOptions.chart, type: 'line', height: 140 },
-        series: [{ name: 'Avg Watch Time (sec)', data: [18, 21, 19, 24, 23, 26, 25] }],
-        xaxis: { categories: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] },
-        yaxis: { labels: { formatter: (val) => val + 's' } },
-        colors: ['#e94057'],
-        stroke: { curve: 'smooth', width: 3 },
-        markers: { size: 5 }
-    }).render();
-
     // TWITTER
     new ApexCharts(document.querySelector("#twitter-impressions-chart"), {
         ...baseOptions,

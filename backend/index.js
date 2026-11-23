@@ -570,7 +570,7 @@ app.post('/api/schedule-post', upload.single('video'), async (req, res) => {
   const postPayload = {
     title: title || caption || filename || 'Scheduled Video',
     caption: caption || title || '',
-    platforms: platforms || 'YouTube, Instagram, Facebook, Threads, Twitter, LinkedIn, Bluesky, Pinterest, TikTok',
+    platforms: platforms || 'YouTube, Instagram, Facebook, Threads, Twitter, LinkedIn, Bluesky, Pinterest',
     scheduled_time: scheduledTime || new Date(Date.now() + 60000).toISOString(),
     status: 'scheduled',
     video_path: videoPath,
@@ -995,7 +995,7 @@ app.post('/api/library/archive-video', async (req, res) => {
     const itemValues = {
       title: existingRow?.title || String(localItem?.title || 'Recovered AI Video').slice(0, 200),
       status: existingRow?.status === 'published' ? 'published' : 'draft',
-      platforms: existingRow?.platforms || (Array.isArray(localItem?.platforms) ? localItem.platforms.slice(0, 10) : ['YouTube', 'Instagram', 'TikTok']),
+      platforms: existingRow?.platforms || (Array.isArray(localItem?.platforms) ? localItem.platforms.slice(0, 10) : ['YouTube', 'Instagram']),
       type: existingRow?.type || String(localItem?.type || 'ai-generated').slice(0, 40),
       file_path: storagePathRef,
       caption: existingRow?.caption || String(localItem?.caption || '').slice(0, 5000),
@@ -2907,8 +2907,8 @@ const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID || '';
 
 // Discord status check
 app.get('/api/discord/status', async (req, res) => {
-  if (!DISCORD_BOT_TOKEN)
-    return res.json({ connected: false, discordConnected: false, message: 'Set DISCORD_BOT_TOKEN in server/.env' });
+  if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID)
+    return res.json({ connected: false, discordConnected: false, message: 'Set DISCORD_BOT_TOKEN and DISCORD_GUILD_ID in the backend environment.' });
 
   try {
     // Check bot status by fetching guild info
@@ -2974,7 +2974,7 @@ app.get('/api/discord/analytics', async (req, res) => {
       stats: {
         members: guild.approximate_member_count || 0,
         messages: recentMessages.length,
-        reactions: 0, // Discord API doesn't provide aggregate reaction count easily
+        reactions: recentMessages.reduce((total, msg) => total + (msg.reactions || []).reduce((sum, reaction) => sum + (reaction.count || 0), 0), 0),
         channels: textChannels.length
       },
       recentMessages: recentMessages.slice(0, 5).map(msg => ({
@@ -3039,7 +3039,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const BLOTATO_API_KEY = process.env.BLOTATO_API_KEY || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const BLOTATO_BASE_URL = 'https://backend.blotato.com/v2';
-const BLOTATO_SOCIAL_PLATFORMS = new Set(['twitter', 'linkedin', 'facebook', 'instagram', 'pinterest', 'tiktok', 'threads', 'bluesky', 'youtube']);
+const BLOTATO_SOCIAL_PLATFORMS = new Set(['twitter', 'linkedin', 'facebook', 'instagram', 'pinterest', 'threads', 'bluesky', 'youtube']);
 
 function requireBlotatoSession(req, res) {
   if (!req.session || !req.session.user || !req.session.user.id) {
@@ -3183,17 +3183,6 @@ app.post('/api/library/:id/publish', async (req, res) => {
       const content = { text: caption, mediaUrls: [mediaUrl], platform: destination.platform };
 
       if (destination.platform === 'instagram' || destination.platform === 'facebook') target.mediaType = 'reel';
-      if (destination.platform === 'tiktok') {
-        Object.assign(target, {
-          privacyLevel: req.body?.tiktokPrivacy === 'SELF_ONLY' ? 'SELF_ONLY' : 'PUBLIC_TO_EVERYONE',
-          disabledComments: false,
-          disabledDuet: false,
-          disabledStitch: false,
-          isBrandedContent: false,
-          isYourBrand: false,
-          isAiGenerated: String(libraryRow.type || '').toLowerCase().includes('ai')
-        });
-      }
       if (destination.platform === 'youtube') {
         Object.assign(target, {
           title: String(libraryRow.title || 'Video').slice(0, 100),
@@ -3655,7 +3644,7 @@ app.post('/api/video/save-generated', async (req, res) => {
     const itemValues = {
       title: title || existingRow?.title || 'AI Generated Video',
       status: 'saving',
-      platforms: Array.isArray(platforms) && platforms.length ? platforms : (existingRow?.platforms || ['YouTube', 'Instagram', 'TikTok']),
+      platforms: Array.isArray(platforms) && platforms.length ? platforms : (existingRow?.platforms || ['YouTube', 'Instagram']),
       type: 'ai-generated',
       file_path: filePath,
       caption: prompt || existingRow?.caption || '',
