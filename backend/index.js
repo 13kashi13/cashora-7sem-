@@ -3566,7 +3566,6 @@ app.post('/api/video/save-generated', async (req, res) => {
   let videoId = String(requestedVideoId || '').trim();
   let retryRow = null;
   let existingRow = null;
-  let libraryRow = null;
 
   try {
     if (libraryItemId) {
@@ -3625,50 +3624,22 @@ app.post('/api/video/save-generated', async (req, res) => {
     );
     const blotatoItem = statusRes.data?.item;
     if (!blotatoItem || blotatoItem.status !== 'done' || !blotatoItem.mediaUrl) {
-      if (existingRow) {
-        const { data: failedRow, error: updateError } = await supabase
-          .from('library_items')
-          .update({ status: 'save_failed' })
-          .eq('id', existingRow.id)
-          .select()
-          .single();
-        if (!updateError) existingRow = failedRow;
-      }
       return res.status(409).json({
         success: false,
-        item: existingRow ? await libraryItemForClient(existingRow) : null,
+        item: null,
         message: 'Blotato has not finished this video yet. Please retry in a moment.'
       });
     }
 
     const itemValues = {
       title: title || existingRow?.title || 'AI Generated Video',
-      status: 'saving',
+      status: 'draft',
       platforms: Array.isArray(platforms) && platforms.length ? platforms : (existingRow?.platforms || ['YouTube', 'Instagram']),
       type: 'ai-generated',
       file_path: filePath,
       caption: prompt || existingRow?.caption || '',
       user_id: userId
     };
-
-    if (existingRow) {
-      const { data, error } = await supabase
-        .from('library_items')
-        .update(itemValues)
-        .eq('id', existingRow.id)
-        .select()
-        .single();
-      if (error) throw new Error(`Could not prepare the Library item: ${error.message}`);
-      libraryRow = data;
-    } else {
-      const { data, error } = await supabase
-        .from('library_items')
-        .insert(itemValues)
-        .select()
-        .single();
-      if (error) throw new Error(`Could not create the Library item: ${error.message}`);
-      libraryRow = data;
-    }
 
     await ensureGeneratedVideoBucket();
     const videoBuffer = await downloadPublicVideo(blotatoItem.mediaUrl);
@@ -3682,13 +3653,25 @@ app.post('/api/video/save-generated', async (req, res) => {
       });
     if (uploadError) throw new Error(`Supabase Storage upload failed: ${uploadError.message}`);
 
-    const { data: savedRow, error: updateError } = await supabase
-      .from('library_items')
-      .update({ status: 'draft', file_path: filePath })
-      .eq('id', libraryRow.id)
-      .select()
-      .single();
-    if (updateError) throw new Error(`The video uploaded, but its Library status could not be updated: ${updateError.message}`);
+    let savedRow;
+    if (existingRow) {
+      const { data, error } = await supabase
+        .from('library_items')
+        .update(itemValues)
+        .eq('id', existingRow.id)
+        .select()
+        .single();
+      if (error) throw new Error(`The video uploaded, but its Library item could not be updated: ${error.message}`);
+      savedRow = data;
+    } else {
+      const { data, error } = await supabase
+        .from('library_items')
+        .insert(itemValues)
+        .select()
+        .single();
+      if (error) throw new Error(`The video uploaded, but its Library item could not be created: ${error.message}`);
+      savedRow = data;
+    }
 
     console.log('✅ Generated video saved to Storage and Library:', savedRow.id);
     return res.status(201).json({
@@ -3699,26 +3682,10 @@ app.post('/api/video/save-generated', async (req, res) => {
     });
   } catch (err) {
     console.error('❌ Failed to persist generated video:', err.message);
-    const rowToMarkFailed = libraryRow || existingRow;
-    if (rowToMarkFailed) {
-      const { data: failedRow, error: markError } = await supabase
-        .from('library_items')
-        .update({ status: 'save_failed' })
-        .eq('id', rowToMarkFailed.id)
-        .select()
-        .single();
-      if (markError) {
-        console.error('Could not mark Library item as save_failed:', markError.message);
-        libraryRow = { ...rowToMarkFailed, status: 'save_failed' };
-      } else {
-        libraryRow = failedRow;
-      }
-    }
-    const clientItem = libraryRow ? await libraryItemForClient(libraryRow) : null;
     return res.status(502).json({
       success: false,
-      savedToDatabase: !!libraryRow,
-      item: clientItem,
+      savedToDatabase: false,
+      item: null,
       message: `Video was created, but saving it to the Library failed: ${err.message}`
     });
   }

@@ -3039,7 +3039,7 @@ async function saveGeneratedVideoToLibrary(videoId, title, prompt, platforms) {
         id: priorBackup?.id || `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         title: title || 'AI Generated Video',
         date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-        status: 'save_failed',
+        status: 'draft',
         platforms: platforms || ['YouTube', 'Instagram'],
         type: 'ai-generated',
         filePath: window._lastGeneratedVideoUrl || priorBackup?.filePath || '',
@@ -3083,9 +3083,9 @@ async function retryLocalGeneratedVideo(itemId) {
     if (!item || !item.videoId) return alert('This item has no video generation ID. Use “Save permanently” to recover it from its video link.');
     try {
         await saveGeneratedVideoToLibrary(item.videoId, item.title, item.caption, item.platforms);
-        alert('✅ Video saved to permanent storage.');
+        alert('✅ Video saved to your Library.');
     } catch (error) {
-        alert('❌ Retry failed: ' + error.message);
+        alert('❌ Could not save video: ' + error.message);
     }
 }
 
@@ -3437,15 +3437,13 @@ async function renderLibrary() {
         const savingSince = Date.parse(item.updatedAt || item.createdAt || '');
         const isStaleSaving = isSaving && Number.isFinite(savingSince) && Date.now() - savingSince > 5 * 60 * 1000;
         const canRetrySave = isSaveFailed || isStaleSaving;
-        const badge = isStorageUnavailable
+        const badge = isBrowserOnly ? '' : isStorageUnavailable
             ? `<span class="badge" style="background:#5a1f1f;color:#ffb1b1;">Playback unavailable</span>`
-            : canRetrySave
-            ? `<span class="badge" style="background:#5a1f1f;color:#ffb1b1;">Save needs retry</span>`
             : isSaving
                 ? `<span class="badge muted">Saving…</span>`
                 : isDraft
             ? `<span class="badge muted">Draft</span>` 
-            : isBrowserOnly ? '' : `<span class="badge green">Published</span>`;
+            : `<span class="badge green">Published</span>`;
         const grad = THUMB_GRADIENTS[idx % THUMB_GRADIENTS.length];
         const playbackUrl = item.filePath || '';
         const safeTitle = escapeHtml(item.title || 'Untitled video');
@@ -3484,7 +3482,7 @@ async function renderLibrary() {
                     <div class="video-actions">
                         ${canRetryLocalGenerated ? `
                             <button class="v-btn publish" onclick="retryLocalGeneratedVideo('${item.id}')">
-                                Retry Save
+                                Save
                             </button>
                         ` : canArchiveVideo ? `
                             <button class="v-btn publish" onclick="archiveLibraryVideo('${item.id}')">
@@ -3492,7 +3490,7 @@ async function renderLibrary() {
                             </button>
                         ` : canRetrySave ? `
                             <button class="v-btn publish" onclick="retryLibraryVideoSave('${item.id}').then(() => alert('✅ Video saved to persistent storage.')).catch(err => alert('❌ Retry failed: ' + err.message))">
-                                Retry Save
+                                Save
                             </button>
                         ` : isSaving ? `
                             <span class="badge muted">Saving video…</span>
