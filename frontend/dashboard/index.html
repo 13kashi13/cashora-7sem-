@@ -3080,7 +3080,7 @@ async function saveGeneratedVideoToLibrary(videoId, title, prompt, platforms) {
 
 async function retryLocalGeneratedVideo(itemId) {
     const item = getLibraryItems().find(entry => String(entry.id) === String(itemId));
-    if (!item || !item.videoId) return alert('This browser copy has no video generation ID. Use “Save permanently” to recover it from its video link.');
+    if (!item || !item.videoId) return alert('This item has no video generation ID. Use “Save permanently” to recover it from its video link.');
     try {
         await saveGeneratedVideoToLibrary(item.videoId, item.title, item.caption, item.platforms);
         alert('✅ Video saved to permanent storage.');
@@ -3437,9 +3437,7 @@ async function renderLibrary() {
         const savingSince = Date.parse(item.updatedAt || item.createdAt || '');
         const isStaleSaving = isSaving && Number.isFinite(savingSince) && Date.now() - savingSince > 5 * 60 * 1000;
         const canRetrySave = isSaveFailed || isStaleSaving;
-        const badge = isBrowserOnly
-            ? `<span class="badge" style="background:#4b3513;color:#ffd899;">Browser copy</span>`
-            : isStorageUnavailable
+        const badge = isStorageUnavailable
             ? `<span class="badge" style="background:#5a1f1f;color:#ffb1b1;">Playback unavailable</span>`
             : canRetrySave
             ? `<span class="badge" style="background:#5a1f1f;color:#ffb1b1;">Save needs retry</span>`
@@ -3447,7 +3445,7 @@ async function renderLibrary() {
                 ? `<span class="badge muted">Saving…</span>`
                 : isDraft
             ? `<span class="badge muted">Draft</span>` 
-            : `<span class="badge green">Published</span>`;
+            : isBrowserOnly ? '' : `<span class="badge green">Published</span>`;
         const grad = THUMB_GRADIENTS[idx % THUMB_GRADIENTS.length];
         const playbackUrl = item.filePath || '';
         const safeTitle = escapeHtml(item.title || 'Untitled video');
@@ -4914,7 +4912,7 @@ function openVideoModal(videoUrl, videoTitle) {
     
     modal.style.display = 'flex';
     if (!videoUrl) {
-        errorMessage.textContent = 'There is no playable video link for this Library item. If it is an older browser copy, use “Save permanently” to recover it while its link still works.';
+        errorMessage.textContent = 'There is no playable video link for this Library item. Use “Save permanently” to recover it while its link still works.';
         errorMessage.style.display = 'block';
     }
     
