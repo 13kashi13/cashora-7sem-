@@ -3524,21 +3524,18 @@ app.post('/api/video/publish-generated', async (req, res) => {
       return res.status(409).json({ success: false, message: 'The AI video is not ready to publish yet.' });
     }
 
-    const videoBuffer = await downloadPublicVideo(video.mediaUrl);
-    const formData = new FormData();
-    formData.append('media', videoBuffer, {
-      filename: `cashora-${videoId}.mp4`,
-      contentType: 'video/mp4'
-    });
-    if (user.email) formData.append('email', user.email);
-    if (caption) formData.append('caption', caption);
-    formData.append('platforms', platforms.join(', '));
-
+    const title = String(req.body?.title || `AI Generated Video - ${new Date().toLocaleDateString()}`).trim().slice(0, 200);
     const webhookUrl = process.env.N8N_WEBHOOK_URL || 'https://felixfelix.app.n8n.cloud/webhook/89093ed9-5a7c-4f9b-a9a5-6c27045e0f2d';
-    const n8nResponse = await axios.post(webhookUrl, formData, {
-      headers: formData.getHeaders(),
+    const n8nResponse = await axios.post(webhookUrl, {
+      contentType: 'generated_video',
+      title,
+      caption,
+      mediaUrl: video.mediaUrl,
+      email: user.email || '',
+      platforms: platforms.join(', ')
+    }, {
+      headers: { 'Content-Type': 'application/json' },
       timeout: 180000,
-      maxBodyLength: GENERATED_VIDEO_MAX_BYTES + 1024 * 1024,
       maxContentLength: 1024 * 1024
     });
     const result = {
