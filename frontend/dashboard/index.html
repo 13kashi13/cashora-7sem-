@@ -848,9 +848,10 @@
                 <!-- Done card -->
                 <div class="done-card" id="doneCard">
                     <h3>Content Ready</h3>
-                    <p>Your video has been generated and is ready to publish to your selected platforms.</p>
+                    <p id="doneStatus">Your video has been generated and is ready to publish to your selected platforms.</p>
                     <div class="done-actions">
                         <button class="done-btn primary" onclick="manualSaveToLibrary()">💾 Save to Library</button>
+                        <button class="done-btn" id="retryGeneratedPublishBtn" onclick="retryGeneratedVideoPublish()" style="display:none;background:#13183a;border:1px solid #2a3575;color:#8899ff;">Retry Posting</button>
                         <button class="done-btn" onclick="scheduleCurrentGeneratedVideo()" style="background:#13183a; border:1px solid #2a3575; color:#8899ff;">Schedule Post</button>
                         <button class="done-btn secondary" onclick="resetCreate()">Create Another</button>
                     </div>
@@ -2881,6 +2882,10 @@ async function startGenerate() {
 
     // Finish video generation and show result
     function finishVideoGeneration(videoUrl, platforms, videoId) {
+        window._finishedGeneratedVideoIds = window._finishedGeneratedVideoIds || new Set();
+        if (window._finishedGeneratedVideoIds.has(String(videoId))) return;
+        window._finishedGeneratedVideoIds.add(String(videoId));
+
         // Show final step
         updateProgress(4, promptSteps, 'Video complete!');
 
@@ -2910,18 +2915,68 @@ async function startGenerate() {
             const videoTitle = `AI Generated Video - ${new Date().toLocaleDateString()}`;
             window._lastGeneratedVideoTitle = videoTitle;
             const userPrompt = document.getElementById('promptInput')?.value || 'AI video';
+            const statusEl = document.getElementById('doneStatus');
+            const retryPostBtn = document.getElementById('retryGeneratedPublishBtn');
+            if (statusEl) statusEl.textContent = 'Sending your video to the selected platforms and saving a copy to your Library...';
+            if (retryPostBtn) retryPostBtn.style.display = 'none';
 
-            console.log('💾 Saving generated video and Library record...');
-            try {
-                await saveGeneratedVideoToLibrary(videoId, videoTitle, userPrompt, window._lastGeneratedVideoPlatforms);
-                alert('✅ Video saved to your Library and persistent storage.');
-            } catch (err) {
-                console.error('❌ Failed to persist generated video:', err);
-                alert('⚠️ The video was created, but could not be saved to your Library. Keep this page open and use “Save to Library” to retry. ' + err.message);
+            const outcomes = await Promise.allSettled([
+                publishGeneratedVideoToWorkflow(videoId, userPrompt, window._lastGeneratedVideoPlatforms),
+                saveGeneratedVideoToLibrary(videoId, videoTitle, userPrompt, window._lastGeneratedVideoPlatforms)
+            ]);
+            const publishOutcome = outcomes[0];
+            const libraryOutcome = outcomes[1];
+            const statusMessages = [];
+            if (publishOutcome.status === 'fulfilled') {
+                statusMessages.push(`✅ Posting workflow accepted the video for ${window._lastGeneratedVideoPlatforms.join(', ')}.`);
+            } else {
+                console.error('❌ Generated video posting workflow failed:', publishOutcome.reason);
+                statusMessages.push(`⚠️ Posting did not start: ${publishOutcome.reason?.message || 'Unknown error'}`);
+                if (retryPostBtn) retryPostBtn.style.display = 'inline-flex';
             }
-
+            if (libraryOutcome.status === 'fulfilled') {
+                statusMessages.push('✅ Saved to your Library.');
+            } else {
+                console.error('❌ Failed to persist generated video:', libraryOutcome.reason);
+                statusMessages.push(`⚠️ Library save failed: ${libraryOutcome.reason?.message || 'Unknown error'}. Use “Save to Library” to retry.`);
+            }
+            if (statusEl) statusEl.textContent = statusMessages.join(' ');
             console.log('🎉 Video generation complete!', videoUrl);
         }, 1000);
+    }
+
+    async function publishGeneratedVideoToWorkflow(videoId, caption, platforms) {
+        const response = await fetch(window.CASHORA_CONFIG.video.publishGenerated, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ videoId, caption, platforms })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.success) {
+            throw new Error(data.message || `Posting workflow request failed (${response.status}).`);
+        }
+        return data;
+    }
+
+    async function retryGeneratedVideoPublish() {
+        const button = document.getElementById('retryGeneratedPublishBtn');
+        const statusEl = document.getElementById('doneStatus');
+        if (!window._lastGeneratedVideoId) return;
+        if (button) { button.disabled = true; button.textContent = 'Retrying...'; }
+        try {
+            await publishGeneratedVideoToWorkflow(
+                window._lastGeneratedVideoId,
+                document.getElementById('promptInput')?.value || 'AI video',
+                window._lastGeneratedVideoPlatforms || []
+            );
+            if (statusEl) statusEl.textContent = '✅ Posting workflow accepted the video.';
+            if (button) button.style.display = 'none';
+        } catch (error) {
+            if (statusEl) statusEl.textContent = `⚠️ Posting did not start: ${error.message}`;
+        } finally {
+            if (button) { button.disabled = false; button.textContent = 'Retry Posting'; }
+        }
     }
 
     // Manual save to library (backup button)

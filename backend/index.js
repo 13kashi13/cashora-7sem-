@@ -798,10 +798,12 @@ function parseStorageReference(reference) {
 }
 
 async function libraryItemForClient(item) {
+  const createdAt = item.createdAt || item.created_at || null;
   const result = {
     ...item,
     filePath: item.filePath || item.file_path || '',
-    createdAt: item.createdAt || item.created_at || null
+    createdAt,
+    date: item.date || (createdAt ? new Date(createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '')
   };
   const storageRef = parseStorageReference(result.filePath);
   result.storageBacked = !!storageRef;
@@ -889,7 +891,6 @@ app.post('/api/library', async (req, res) => {
   const userId = req.session && req.session.user ? req.session.user.id : null;
   const item = {
     title: req.body.title || 'Untitled Video',
-    date: req.body.date || new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
     status: req.body.status || 'draft',
     platforms: req.body.platforms || ['YouTube', 'Instagram'],
     type: req.body.type || 'upload',
@@ -981,7 +982,6 @@ app.post('/api/library/archive-video', async (req, res) => {
 
     const itemValues = {
       title: existingRow?.title || String(localItem?.title || 'Recovered AI Video').slice(0, 200),
-      date: existingRow?.date || String(localItem?.date || new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })).slice(0, 40),
       status: existingRow?.status === 'published' ? 'published' : 'draft',
       platforms: existingRow?.platforms || (Array.isArray(localItem?.platforms) ? localItem.platforms.slice(0, 10) : ['YouTube', 'Instagram', 'TikTok']),
       type: existingRow?.type || String(localItem?.type || 'ai-generated').slice(0, 40),
@@ -3481,6 +3481,82 @@ app.get('/api/video/status/:id', async (req, res) => {
   }
 });
 
+// Send a completed AI video through the same n8n workflow used by direct uploads.
+// Keep a short-lived in-process guard so repeated completion polls cannot post twice.
+const generatedVideoPublishRequests = new Map();
+app.post('/api/video/publish-generated', async (req, res) => {
+  const user = req.session && req.session.user;
+  if (!user) return res.status(401).json({ success: false, message: 'Sign in before publishing this video.' });
+  if (!BLOTATO_API_KEY) return res.status(503).json({ success: false, message: 'Video publishing is unavailable because Blotato is not configured.' });
+
+  const videoId = String(req.body?.videoId || '').trim();
+  const platforms = Array.isArray(req.body?.platforms)
+    ? req.body.platforms.map(platform => String(platform).trim()).filter(Boolean).slice(0, 12)
+    : [];
+  const caption = String(req.body?.caption || '').trim().slice(0, 5000);
+  if (!videoId || !/^[A-Za-z0-9_-]{1,200}$/.test(videoId)) {
+    return res.status(400).json({ success: false, message: 'A valid generated video ID is required.' });
+  }
+  if (!platforms.length) return res.status(400).json({ success: false, message: 'Select at least one platform before publishing.' });
+
+  const publishKey = `${user.id}:${videoId}`;
+  const now = Date.now();
+  for (const [key, entry] of generatedVideoPublishRequests) {
+    if (now - entry.updatedAt > 24 * 60 * 60 * 1000) generatedVideoPublishRequests.delete(key);
+  }
+  const previous = generatedVideoPublishRequests.get(publishKey);
+  if (previous?.state === 'processing') {
+    return res.status(202).json({ success: true, processing: true, message: 'The posting workflow is already receiving this video.' });
+  }
+  if (previous?.state === 'sent') {
+    return res.json({ ...previous.result, alreadySent: true });
+  }
+
+  generatedVideoPublishRequests.set(publishKey, { state: 'processing', updatedAt: now });
+  try {
+    const statusRes = await axios.get(
+      `${BLOTATO_BASE_URL}/videos/creations/${encodeURIComponent(videoId)}`,
+      { headers: { 'blotato-api-key': BLOTATO_API_KEY }, timeout: 30000 }
+    );
+    const video = statusRes.data?.item;
+    if (!video || video.status !== 'done' || !video.mediaUrl) {
+      generatedVideoPublishRequests.delete(publishKey);
+      return res.status(409).json({ success: false, message: 'The AI video is not ready to publish yet.' });
+    }
+
+    const videoBuffer = await downloadPublicVideo(video.mediaUrl);
+    const formData = new FormData();
+    formData.append('media', videoBuffer, {
+      filename: `cashora-${videoId}.mp4`,
+      contentType: 'video/mp4'
+    });
+    if (user.email) formData.append('email', user.email);
+    if (caption) formData.append('caption', caption);
+    formData.append('platforms', platforms.join(', '));
+
+    const webhookUrl = process.env.N8N_WEBHOOK_URL || 'https://felixfelix.app.n8n.cloud/webhook/89093ed9-5a7c-4f9b-a9a5-6c27045e0f2d';
+    const n8nResponse = await axios.post(webhookUrl, formData, {
+      headers: formData.getHeaders(),
+      timeout: 180000,
+      maxBodyLength: GENERATED_VIDEO_MAX_BYTES + 1024 * 1024,
+      maxContentLength: 1024 * 1024
+    });
+    const result = {
+      success: true,
+      workflowStatus: n8nResponse.status,
+      platforms,
+      message: 'The video was sent to the posting workflow.'
+    };
+    generatedVideoPublishRequests.set(publishKey, { state: 'sent', updatedAt: Date.now(), result });
+    return res.json(result);
+  } catch (err) {
+    generatedVideoPublishRequests.delete(publishKey);
+    console.error('Could not send generated video to the posting workflow:', err.response?.status || err.message);
+    const message = err.response?.data?.message || err.response?.data?.error || 'The video was created, but the posting workflow could not be started.';
+    return res.status(502).json({ success: false, message });
+  }
+});
+
 // Copy a completed Blotato video into private Supabase Storage and persist its
 // Library row before reporting success to the browser.
 app.post('/api/video/save-generated', async (req, res) => {
@@ -3569,7 +3645,6 @@ app.post('/api/video/save-generated', async (req, res) => {
 
     const itemValues = {
       title: title || existingRow?.title || 'AI Generated Video',
-      date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       status: 'saving',
       platforms: Array.isArray(platforms) && platforms.length ? platforms : (existingRow?.platforms || ['YouTube', 'Instagram', 'TikTok']),
       type: 'ai-generated',
