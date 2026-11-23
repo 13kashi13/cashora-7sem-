@@ -657,6 +657,19 @@
                                 </div>
                             </div>
                         </div>
+                        <div class="form-group">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                                <label class="form-label" style="margin-bottom:0;">Post Caption <span style="font-weight:400;color:var(--muted);">(Optional)</span></label>
+                                <button type="button" id="promptAiCaptionBtn" class="ai-caption-btn" onclick="improveCaption('promptCaptionInput', 'promptAiCaptionBtn', 'promptCaptionMsg')">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3z"/></svg>
+                                    <span class="ai-caption-btn-text">Improve with AI</span>
+                                </button>
+                            </div>
+                            <div class="prompt-wrap">
+                                <textarea class="prompt-input" id="promptCaptionInput" style="min-height:70px;" placeholder="Write the caption that should appear with your generated video..."></textarea>
+                            </div>
+                            <div id="promptCaptionMsg" style="font-size:12px;margin-top:6px;display:none;"></div>
+                        </div>
                     </div>
 
                     <!-- Upload tab -->
@@ -2081,7 +2094,7 @@ function showPage(id, btn) {
         const ts = document.getElementById('scheduleTime');
         if (ds && !ds.value) {
             const d = new Date(Date.now() + 3600000);
-            ds.value = d.toISOString().slice(0, 10);
+            ds.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
             ts.value = d.toTimeString().slice(0, 5);
         }
     }
@@ -2185,7 +2198,7 @@ function applySchedulePreset(preset) {
     else if (preset === 'tmr9') { target = new Date(now); target.setDate(target.getDate() + 1); target.setHours(9, 0, 0, 0); }
     else if (preset === 'tmr6') { target = new Date(now); target.setDate(target.getDate() + 1); target.setHours(18, 0, 0, 0); }
     if (!target) return;
-    ds.value = target.toISOString().slice(0, 10);
+    ds.value = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}-${String(target.getDate()).padStart(2, '0')}`;
     ts.value = target.toTimeString().slice(0, 5);
 }
 
@@ -2293,8 +2306,11 @@ async function renderScheduledPosts() {
                 failed:     `<span class="badge" style="background:#2a0a0a;color:#ff6666;font-size:11px;">✗ Failed</span>`
             }[p.status] || `<span class="badge muted" style="font-size:11px;">${p.status}</span>`;
 
-            const scheduledDate = new Date(p.scheduledTime);
-            const timeStr = scheduledDate.toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+            const rawScheduledTime = p.scheduledTime || p.scheduled_time || p.postedAt || p.posted_at || p.createdAt || p.created_at;
+            const scheduledDate = rawScheduledTime ? new Date(rawScheduledTime) : null;
+            const timeStr = scheduledDate && Number.isFinite(scheduledDate.getTime())
+                ? scheduledDate.toLocaleString([], { month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit' })
+                : 'Date unavailable';
             const platformStr = p.platforms || 'All platforms';
 
             const actionBtns = p.status === 'scheduled' ? `
@@ -2759,17 +2775,39 @@ async function startGenerate() {
             window._lastGeneratedVideoUrl = videoUrl;
             window._lastGeneratedVideoId = videoId;
             window._lastGeneratedVideoPlatforms = platforms || ['YouTube', 'Instagram'];
-            const videoTitle = `AI Generated Video - ${new Date().toLocaleDateString()}`;
-            window._lastGeneratedVideoTitle = videoTitle;
             const userPrompt = document.getElementById('promptInput')?.value || 'AI video';
             const statusEl = document.getElementById('doneStatus');
+            let postCaption = document.getElementById('promptCaptionInput')?.value.trim() || '';
+            if (!postCaption) {
+                if (statusEl) statusEl.textContent = 'Creating a post caption...';
+                try {
+                    const captionRes = await fetch(window.CASHORA_CONFIG.ai.improveCaption, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ caption: userPrompt, mode: 'generate' })
+                    });
+                    const captionData = await captionRes.json().catch(() => ({}));
+                    if (captionRes.ok && captionData.success && captionData.improvedCaption) {
+                        postCaption = captionData.improvedCaption.trim();
+                    }
+                } catch (error) {
+                    console.warn('Could not generate a social caption; continuing with a neutral caption.', error);
+                }
+                if (!postCaption) postCaption = 'AI generated video';
+                const captionInput = document.getElementById('promptCaptionInput');
+                if (captionInput) captionInput.value = postCaption;
+            }
+            const videoTitle = postCaption.slice(0, 200) || 'AI Generated Video';
+            window._lastGeneratedVideoTitle = videoTitle;
+            window._lastGeneratedVideoCaption = postCaption;
             const retryPostBtn = document.getElementById('retryGeneratedPublishBtn');
             if (statusEl) statusEl.textContent = 'Sending your video to the selected platforms and saving a copy to your Library...';
             if (retryPostBtn) retryPostBtn.style.display = 'none';
 
             const outcomes = await Promise.allSettled([
-                publishGeneratedVideoToWorkflow(videoId, userPrompt, window._lastGeneratedVideoPlatforms),
-                saveGeneratedVideoToLibrary(videoId, videoTitle, userPrompt, window._lastGeneratedVideoPlatforms)
+                publishGeneratedVideoToWorkflow(videoId, postCaption, window._lastGeneratedVideoPlatforms),
+                saveGeneratedVideoToLibrary(videoId, videoTitle, postCaption, window._lastGeneratedVideoPlatforms)
             ]);
             const publishOutcome = outcomes[0];
             const libraryOutcome = outcomes[1];
@@ -2814,7 +2852,7 @@ async function startGenerate() {
         try {
             await publishGeneratedVideoToWorkflow(
                 window._lastGeneratedVideoId,
-                document.getElementById('promptInput')?.value || 'AI video',
+                window._lastGeneratedVideoCaption || document.getElementById('promptCaptionInput')?.value.trim() || '',
                 window._lastGeneratedVideoPlatforms || []
             );
             if (statusEl) statusEl.textContent = '✅ Posting workflow accepted the video.';
@@ -2837,7 +2875,7 @@ async function startGenerate() {
             await saveGeneratedVideoToLibrary(
                 videoId,
                 window._lastGeneratedVideoTitle || `AI Generated Video - ${new Date().toLocaleDateString()}`,
-                document.getElementById('promptInput')?.value || 'AI video',
+                window._lastGeneratedVideoCaption || document.getElementById('promptCaptionInput')?.value.trim() || '',
                 window._lastGeneratedVideoPlatforms || ['YouTube', 'Instagram']
             );
             showPage('library');
@@ -2952,6 +2990,8 @@ function resetCreate() {
     // Clear prompt input
     const promptInput = document.getElementById('promptInput');
     if (promptInput) promptInput.value = '';
+    const promptCaptionInput = document.getElementById('promptCaptionInput');
+    if (promptCaptionInput) promptCaptionInput.value = '';
     const promptCount = document.getElementById('promptCount');
     if (promptCount) promptCount.textContent = '0 / 500';
 

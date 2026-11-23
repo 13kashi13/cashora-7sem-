@@ -613,7 +613,12 @@ app.get('/api/scheduled-posts', async (req, res) => {
       console.error('Error fetching scheduled posts:', error.message);
       return res.json({ scheduledPosts: [] });
     }
-    res.json({ scheduledPosts: data || [] });
+    res.json({ scheduledPosts: (data || []).map(post => ({
+      ...post,
+      scheduledTime: post.scheduledTime || post.scheduled_time || null,
+      postedAt: post.postedAt || post.posted_at || null,
+      createdAt: post.createdAt || post.created_at || null
+    })) });
   } catch (err) {
     console.error('Exception fetching scheduled posts:', err.message);
     res.json({ scheduledPosts: [] });
@@ -1106,7 +1111,7 @@ app.post('/api/automation-settings', async (req, res) => {
 });
 
 // ─── AI Caption Improvement ───────────────────────────────────────────────────
-async function improveCaptionWithLLM(originalCaption) {
+async function improveCaptionWithLLM(originalCaption, options = {}) {
   const caption = (originalCaption || '').trim();
   if (!caption) {
     const err = new Error('Please enter a caption to improve.');
@@ -1126,8 +1131,10 @@ async function improveCaptionWithLLM(originalCaption) {
     throw err;
   }
 
-  const systemPrompt = "You are a professional social media copywriter. Improve the provided social media caption to make it engaging, clear, and compelling while preserving the original message and intent. Do NOT add hashtags unless they were already present. Return ONLY the improved caption text, with no explanations, no quotation marks, and no extra commentary.";
-  const userPrompt = `Improve this caption:\n\n${caption}`;
+  const systemPrompt = options.generate
+    ? "You are a professional social media copywriter. Write one concise, engaging social media caption based on the supplied video topic. Do not repeat production instructions or describe the prompt. Do not invent facts or add hashtags. Return only the caption text."
+    : "You are a professional social media copywriter. Improve the provided social media caption to make it engaging, clear, and compelling while preserving the original message and intent. Do NOT add hashtags unless they were already present. Return ONLY the improved caption text, with no explanations, no quotation marks, and no extra commentary.";
+  const userPrompt = options.generate ? `Video topic:\n\n${caption}` : `Improve this caption:\n\n${caption}`;
   const timeoutMs = 25000;
 
   try {
@@ -1275,7 +1282,7 @@ async function improveCaptionWithLLM(originalCaption) {
 
 app.post('/api/ai/improve-caption', async (req, res) => {
   try {
-    const { caption } = req.body || {};
+    const { caption, mode } = req.body || {};
     if (!caption || typeof caption !== 'string' || !caption.trim()) {
       return res.status(400).json({
         success: false,
@@ -1283,7 +1290,7 @@ app.post('/api/ai/improve-caption', async (req, res) => {
       });
     }
 
-    const improvedCaption = await improveCaptionWithLLM(caption);
+    const improvedCaption = await improveCaptionWithLLM(caption, { generate: mode === 'generate' });
     if (!improvedCaption || typeof improvedCaption !== 'string') {
       return res.status(502).json({
         success: false,
@@ -3525,7 +3532,7 @@ app.post('/api/video/publish-generated', async (req, res) => {
       return res.status(409).json({ success: false, message: 'The AI video is not ready to publish yet.' });
     }
 
-    const title = String(req.body?.title || `AI Generated Video - ${new Date().toLocaleDateString()}`).trim().slice(0, 200);
+    const title = String(req.body?.title || caption || 'AI Generated Video').trim().slice(0, 200);
     const webhookUrl = process.env.N8N_WEBHOOK_URL || 'https://felixfelix.app.n8n.cloud/webhook/89093ed9-5a7c-4f9b-a9a5-6c27045e0f2d';
     const n8nResponse = await axios.post(webhookUrl, {
       contentType: 'generated_video',
