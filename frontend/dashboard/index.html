@@ -622,6 +622,16 @@
                         <!-- Video Generation Settings (Prompt Tab Only) -->
                         <div class="form-group" id="videoGenerationSettings">
                             <label class="form-label">Video Settings</label>
+                            <div style="margin-bottom:12px;">
+                                <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">Choose a Blotato Template</div>
+                                <div id="blotatoTemplateGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;max-height:360px;overflow:auto;padding:2px;">
+                                    <div style="color:var(--muted);font-size:12px;padding:14px;">Loading Blotato templates…</div>
+                                </div>
+                                <select id="blotatoTemplateSelect" aria-label="Selected Blotato video template" style="display:none;">
+                                    <option value="">Default AI Video with AI Voice</option>
+                                </select>
+                                <div id="blotatoTemplateDescription" style="font-size:11px;color:var(--muted);margin-top:6px;min-height:14px;"></div>
+                            </div>
                             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;">
                                 <!-- Duration -->
                                 <div>
@@ -2058,6 +2068,70 @@
 <script>
 // ── Page navigation
 const pageTitles = { dashboard:'Dashboard', create:'Create', library:'Library', schedule:'Schedule', distribution:'Distribution', analytics:'Analytics', settings:'Settings' };
+let _blotatoTemplatesLoading = false;
+let _blotatoTemplatesLoaded = false;
+
+async function loadBlotatoVideoTemplates() {
+    const select = document.getElementById('blotatoTemplateSelect');
+    const grid = document.getElementById('blotatoTemplateGrid');
+    const description = document.getElementById('blotatoTemplateDescription');
+    if (!select || !grid || _blotatoTemplatesLoading || _blotatoTemplatesLoaded) return;
+    _blotatoTemplatesLoading = true;
+    try {
+        const response = await fetch(window.CASHORA_CONFIG.video.templates, { credentials: 'include' });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.success || !Array.isArray(data.templates) || !data.templates.length) {
+            throw new Error(data.message || 'No Blotato templates are available.');
+        }
+        const templates = data.templates;
+        const preferred = templates.find(template => /AI Video with AI Voice/i.test(template.name)) || templates[0];
+        select.innerHTML = templates.map(template =>
+            `<option value="${escapeHtml(template.id)}" ${template.id === preferred.id ? 'selected' : ''}>${escapeHtml(template.name)}</option>`
+        ).join('');
+        const gradients = [
+            'linear-gradient(135deg,#2b1749,#5732a0)',
+            'linear-gradient(135deg,#132d50,#246cb0)',
+            'linear-gradient(135deg,#173f36,#2b806c)',
+            'linear-gradient(135deg,#50301a,#bd6d2b)',
+            'linear-gradient(135deg,#392234,#91507c)'
+        ];
+        grid.innerHTML = templates.map((template, index) => `
+            <button type="button" class="blotato-template-card" data-template-id="${escapeHtml(template.id)}" aria-pressed="${template.id === preferred.id ? 'true' : 'false'}" style="text-align:left;padding:0;overflow:hidden;border:1px solid ${template.id === preferred.id ? '#6677ff' : 'var(--border)'};border-radius:10px;background:#111;color:var(--light);cursor:pointer;">
+                <span aria-hidden="true" style="height:92px;display:flex;align-items:center;justify-content:center;background:${gradients[index % gradients.length]};color:#fff;">
+                    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="5" width="15" height="14" rx="2"/><polygon points="23 7 17 12 23 17 23 7"/></svg>
+                </span>
+                <span style="display:block;padding:10px 11px 12px;">
+                    <span style="display:block;font-size:12px;font-weight:700;line-height:1.35;">${escapeHtml(template.name)}</span>
+                    <span style="display:block;margin-top:5px;font-size:10px;line-height:1.45;color:var(--muted);">${escapeHtml(template.description || 'Generate a video from your idea.')}</span>
+                </span>
+            </button>`).join('');
+        const updateSelection = () => {
+            const selected = templates.find(template => template.id === select.value);
+            if (description) description.textContent = selected?.description || 'Blotato will fill this template from your prompt.';
+            grid.querySelectorAll('.blotato-template-card').forEach(card => {
+                const active = card.dataset.templateId === select.value;
+                card.setAttribute('aria-pressed', active ? 'true' : 'false');
+                card.style.borderColor = active ? '#6677ff' : 'var(--border)';
+                card.style.boxShadow = active ? '0 0 0 1px #6677ff' : 'none';
+            });
+        };
+        grid.addEventListener('click', event => {
+            const card = event.target.closest('.blotato-template-card');
+            if (!card) return;
+            select.value = card.dataset.templateId;
+            updateSelection();
+        });
+        updateSelection();
+        _blotatoTemplatesLoaded = true;
+    } catch (error) {
+        console.warn('Blotato template list unavailable; keeping the current default generation flow.', error);
+        select.innerHTML = '<option value="">Default AI Video with AI Voice</option>';
+        grid.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:14px;border:1px solid var(--border);border-radius:9px;">Template gallery unavailable. The default Blotato video template will be used.</div>';
+        if (description) description.textContent = 'Could not load the template list. The current default video template will be used.';
+    } finally {
+        _blotatoTemplatesLoading = false;
+    }
+}
 
 function showPage(id, btn) {
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -2067,6 +2141,7 @@ function showPage(id, btn) {
     pageEl.classList.add('active');
     if (btn) btn.classList.add('active');
     document.getElementById('topTitle').textContent = pageTitles[id] || 'Dashboard';
+    if (id === 'create') loadBlotatoVideoTemplates();
     if (id === 'dashboard') {
         loadDashboardOverview();
     }
@@ -2513,6 +2588,7 @@ async function startGenerate() {
     let uploadedFileData = null;
     let capturedCaption = '';
     let capturedPrompt = '';
+    const selectedVideoTemplateId = document.getElementById('blotatoTemplateSelect')?.value || '';
 
     if (isUploadMode) {
         file = document.getElementById('fileInput')?.files[0];
@@ -2624,7 +2700,8 @@ async function startGenerate() {
                     enhancedPrompt: enhanceData.enhancedPrompt,
                     duration: parseInt(duration),
                     aspectRatio: aspectRatio,
-                    visualStyle: visualStyle
+                    visualStyle: visualStyle,
+                    ...(selectedVideoTemplateId ? { templateId: selectedVideoTemplateId } : {})
                 })
             });
             const generateData = await generateRes.json();

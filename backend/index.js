@@ -3334,6 +3334,30 @@ Enhanced prompt:`;
 });
 
 // Generate video using Blotato API
+app.get('/api/video/templates', async (req, res) => {
+  if (!requireBlotatoSession(req, res)) return;
+  try {
+    const response = await axios.get(`${BLOTATO_BASE_URL}/videos/templates`, {
+      headers: { 'blotato-api-key': BLOTATO_API_KEY },
+      params: { fields: 'id,name,description,inputs' },
+      timeout: 30000
+    });
+    const templates = Array.isArray(response.data?.items) ? response.data.items : [];
+    return res.json({ success: true, templates: templates.filter(item => item?.id && item?.name).map(item => ({
+      id: String(item.id),
+      name: String(item.name),
+      description: String(item.description || ''),
+      inputs: item.inputs || {}
+    })) });
+  } catch (err) {
+    console.error('Blotato video templates could not be loaded:', err.response?.data || err.message);
+    return res.status(err.response?.status || 502).json({
+      success: false,
+      message: err.response?.data?.message || 'Could not load Blotato video templates.'
+    });
+  }
+});
+
 app.post('/api/video/generate', async (req, res) => {
   if (!BLOTATO_API_KEY) {
     return res.status(400).json({ 
@@ -3343,21 +3367,27 @@ app.post('/api/video/generate', async (req, res) => {
   }
 
   try {
-    const { enhancedPrompt, duration, aspectRatio, visualStyle } = req.body;
+    const { enhancedPrompt, duration, aspectRatio, visualStyle, templateId } = req.body;
 
     if (!enhancedPrompt || enhancedPrompt.trim().length === 0) {
       return res.status(400).json({ success: false, error: 'Enhanced prompt is required' });
     }
 
-    // First, get the "AI Video with AI Voice" template ID
-    const templatesRes = await axios.get(
-      `${BLOTATO_BASE_URL}/videos/templates?search=AI Video with AI Voice&fields=id,name,description,inputs`,
-      { headers: { 'blotato-api-key': BLOTATO_API_KEY } }
-    );
-
-    const template = templatesRes.data?.items?.[0];
+    // Keep the existing AI voice template as the default; allow an explicitly
+    // selected Blotato template from the Create page.
+    const templatesRes = await axios.get(`${BLOTATO_BASE_URL}/videos/templates`, {
+      headers: { 'blotato-api-key': BLOTATO_API_KEY },
+      params: templateId
+        ? { fields: 'id,name,description,inputs' }
+        : { search: 'AI Video with AI Voice', fields: 'id,name,description,inputs' },
+      timeout: 30000
+    });
+    const templates = Array.isArray(templatesRes.data?.items) ? templatesRes.data.items : [];
+    const template = templateId
+      ? templates.find(item => String(item.id) === String(templateId))
+      : templates[0];
     if (!template || !template.id) {
-      throw new Error('AI Video with AI Voice template not found');
+      throw new Error(templateId ? 'Selected Blotato template is unavailable. Reload the template list and try again.' : 'AI Video with AI Voice template not found');
     }
 
     // Build the full prompt with user preferences

@@ -56,6 +56,7 @@ window.CASHORA_CONFIG = {
   },
   
   video: {
+    templates: `${API_BASE_URL}/api/video/templates`,
     enhancePrompt: `${API_BASE_URL}/api/video/enhance-prompt`,
     generate: `${API_BASE_URL}/api/video/generate`,
     status: (id) => `${API_BASE_URL}/api/video/status/${id}`,
