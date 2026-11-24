@@ -2085,7 +2085,7 @@ async function loadBlotatoVideoTemplates() {
         }
         const templates = data.templates;
         const preferred = templates.find(template => /AI Video with AI Voice/i.test(template.name)) || templates[0];
-        select.innerHTML = templates.map(template =>
+        select.innerHTML = `<option value="">Default AI Video</option>` + templates.map(template =>
             `<option value="${escapeHtml(template.id)}" ${template.id === preferred.id ? 'selected' : ''}>${escapeHtml(template.name)}</option>`
         ).join('');
         const gradients = [
@@ -2107,7 +2107,7 @@ async function loadBlotatoVideoTemplates() {
             </button>`).join('');
         const updateSelection = () => {
             const selected = templates.find(template => template.id === select.value);
-            if (description) description.textContent = selected?.description || 'Blotato will fill this template from your prompt.';
+            if (description) description.textContent = selected?.description || 'Using the default AI video generation.';
             grid.querySelectorAll('.blotato-template-card').forEach(card => {
                 const active = card.dataset.templateId === select.value;
                 card.setAttribute('aria-pressed', active ? 'true' : 'false');
@@ -2118,7 +2118,7 @@ async function loadBlotatoVideoTemplates() {
         grid.addEventListener('click', event => {
             const card = event.target.closest('.blotato-template-card');
             if (!card) return;
-            select.value = card.dataset.templateId;
+            select.value = select.value === card.dataset.templateId ? '' : card.dataset.templateId;
             updateSelection();
         });
         updateSelection();
