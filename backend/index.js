@@ -3046,6 +3046,15 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const BLOTATO_API_KEY = process.env.BLOTATO_API_KEY || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const BLOTATO_BASE_URL = 'https://backend.blotato.com/v2';
+const BLOTATO_VIDEO_TEMPLATE_MARKERS = [
+  '5903fe43-514d-40ee-a060-0d6628c5f8fd', // AI Video with AI Voice
+  '57f5a565-fd17-458b-be43-4a2d8ccaca75', // AI Selfie Talking Video
+  '7c26a1cd-d5b3-42da-9c73-2413333873b3', // AI Avatar with AI Generated B-roll
+  'c306ae43-1dcc-4f45-ac2b-88e75430ffd8', // Combine Clips and Apply Basic Edits
+  'c9892c3b-fa75-4ade-821a-a50ff8456230', // When X then Y Text Slideshow (video output)
+  '3ed4bb92-dbfe-45e6-9dc8-605b77f70506'  // Video of Images and Text with Minimal Style
+];
+const isBlotatoVideoTemplate = template => BLOTATO_VIDEO_TEMPLATE_MARKERS.some(marker => String(template?.id || '').includes(marker));
 const BLOTATO_SOCIAL_PLATFORMS = new Set(['twitter', 'linkedin', 'facebook', 'instagram', 'pinterest', 'threads', 'bluesky', 'youtube']);
 
 function requireBlotatoSession(req, res) {
@@ -3343,7 +3352,7 @@ app.get('/api/video/templates', async (req, res) => {
       timeout: 30000
     });
     const templates = Array.isArray(response.data?.items) ? response.data.items : [];
-    return res.json({ success: true, templates: templates.filter(item => item?.id && item?.name).map(item => ({
+    return res.json({ success: true, templates: templates.filter(item => item?.id && item?.name && isBlotatoVideoTemplate(item)).map(item => ({
       id: String(item.id),
       name: String(item.name),
       description: String(item.description || ''),
@@ -3386,7 +3395,7 @@ app.post('/api/video/generate', async (req, res) => {
     const template = templateId
       ? templates.find(item => String(item.id) === String(templateId))
       : templates[0];
-    if (!template || !template.id) {
+    if (!template || !template.id || !isBlotatoVideoTemplate(template)) {
       throw new Error(templateId ? 'Selected Blotato template is unavailable. Reload the template list and try again.' : 'AI Video with AI Voice template not found');
     }
 
